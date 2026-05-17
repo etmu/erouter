@@ -1,0 +1,6 @@
+#!/bin/sh
+
+cp -f /www/erouter/index.html /www/index.html
+[ -f /www/erouter/favicon.ico ] && cp -f /www/erouter/favicon.ico /www/favicon.ico
+
+exit 0
