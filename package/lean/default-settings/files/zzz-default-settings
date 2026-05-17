@@ -1,6 +1,12 @@
 #!/bin/sh
 
 uci -q batch <<-EOF
+	set network.lan.ipaddr='192.168.26.1'
+	set network.lan.netmask='255.255.255.0'
+EOF
+uci commit network
+
+uci -q batch <<-EOF
 	set system.@system[0].timezone='CST-8'
 	set system.@system[0].zonename='Asia/Shanghai'
 
@@ -12,6 +18,45 @@ uci -q batch <<-EOF
 EOF
 uci commit system
 
+uci -q batch <<-EOF
+	delete uhttpd.main.listen_http
+	add_list uhttpd.main.listen_http='0.0.0.0:80'
+	add_list uhttpd.main.listen_http='[::]:80'
+	delete uhttpd.main.lua_prefix
+	delete uhttpd.main.ucode_prefix
+	delete uhttpd.main.ubus_prefix
+EOF
+
+if ! uci -q get uhttpd.luci >/dev/null 2>&1; then
+	uci set uhttpd.luci=uhttpd
+fi
+
+uci -q batch <<-EOF
+	delete uhttpd.luci.listen_http
+	add_list uhttpd.luci.listen_http='0.0.0.0:8080'
+	add_list uhttpd.luci.listen_http='[::]:8080'
+	set uhttpd.luci.home='/www-luci'
+	set uhttpd.luci.cgi_prefix='/cgi-bin'
+	set uhttpd.luci.ubus_prefix='/ubus'
+	set uhttpd.luci.ubus_socket='/var/run/ubus/ubus.sock'
+	set uhttpd.luci.script_timeout='600'
+	set uhttpd.luci.network_timeout='600'
+	set uhttpd.luci.max_requests='20'
+	delete uhttpd.luci.lua_prefix
+	delete uhttpd.luci.ucode_prefix
+EOF
+
+[ -d /www/luci-static ] && ln -sfn /www/luci-static /www-luci/luci-static
+[ -d /www/cgi-bin ] && ln -sfn /www/cgi-bin /www-luci/cgi-bin
+
+[ -f /usr/lib/uhttpd_lua.so ] && \
+	uci add_list uhttpd.luci.lua_prefix='/cgi-bin/luci=/usr/lib/lua/luci/sgi/uhttpd.lua'
+[ -f /usr/lib/uhttpd_ucode.so ] && \
+	uci add_list uhttpd.luci.ucode_prefix='/cgi-bin/luci=/usr/share/ucode/luci/uhttpd.uc'
+
+uci commit uhttpd
+/etc/init.d/uhttpd restart
+
 rm -f /usr/lib/lua/luci/view/admin_status/index/mwan.htm
 rm -f /usr/lib/lua/luci/view/admin_status/index/upnp.htm
 rm -f /usr/lib/lua/luci/view/admin_status/index/ddns.htm
@@ -19,6 +64,7 @@ rm -f /usr/lib/lua/luci/view/admin_status/index/minidlna.htm
 
 rm -f /www/luci-static/resources/view/status/include/70_ddns.js
 rm -f /www/luci-static/resources/view/status/include/80_upnp.js
+sed -i "/view.status.include.50_dsl/d" /www/luci-static/resources/view/status/index.js
 
 sed -i 's/\"services\"/\"nas\"/g' /usr/lib/lua/luci/controller/aria2.lua
 sed -i 's/services/nas/g' /usr/lib/lua/luci/view/aria2/overview_status.htm
