@@ -18,42 +18,34 @@ uci -q batch <<-EOF
 EOF
 uci commit system
 
+# 单端口 80：/ -> Vue；/luci/ 仅入口页跳转到标准 LuCI 路径（勿改 cgi/ubus 前缀，否则 XHR 失败）
 uci -q batch <<-EOF
 	delete uhttpd.main.listen_http
 	add_list uhttpd.main.listen_http='0.0.0.0:80'
 	add_list uhttpd.main.listen_http='[::]:80'
+	set uhttpd.main.home='/www'
+	set uhttpd.main.cgi_prefix='/cgi-bin'
+	set uhttpd.main.ubus_prefix='/ubus'
+	set uhttpd.main.ubus_socket='/var/run/ubus/ubus.sock'
+	set uhttpd.main.script_timeout='600'
+	set uhttpd.main.network_timeout='600'
+	set uhttpd.main.max_requests='20'
 	delete uhttpd.main.lua_prefix
 	delete uhttpd.main.ucode_prefix
-	delete uhttpd.main.ubus_prefix
 EOF
 
-if ! uci -q get uhttpd.luci >/dev/null 2>&1; then
-	uci set uhttpd.luci=uhttpd
-fi
+# 移除独立 8080 实例
+uci -q delete uhttpd.luci 2>/dev/null
 
-uci -q batch <<-EOF
-	delete uhttpd.luci.listen_http
-	add_list uhttpd.luci.listen_http='0.0.0.0:8080'
-	add_list uhttpd.luci.listen_http='[::]:8080'
-	set uhttpd.luci.home='/www-luci'
-	set uhttpd.luci.cgi_prefix='/cgi-bin'
-	set uhttpd.luci.ubus_prefix='/ubus'
-	set uhttpd.luci.ubus_socket='/var/run/ubus/ubus.sock'
-	set uhttpd.luci.script_timeout='600'
-	set uhttpd.luci.network_timeout='600'
-	set uhttpd.luci.max_requests='20'
-	delete uhttpd.luci.lua_prefix
-	delete uhttpd.luci.ucode_prefix
-EOF
+# LuCI 使用 OpenWrt 默认 URL（/cgi-bin/luci、/luci-static、/ubus）
+LUC_THEME="$(uci -q get luci.main.mediaurlbase)"
+LUC_THEME="${LUC_THEME##*/}"
+[ -z "$LUC_THEME" ] && LUC_THEME=bootstrap
+uci set luci.main.resourcebase='/luci-static/resources'
+uci set luci.main.mediaurlbase="/luci-static/$LUC_THEME"
+uci set luci.main.ubuspath='/ubus/'
 
-[ -d /www/luci-static ] && ln -sfn /www/luci-static /www-luci/luci-static
-[ -d /www/cgi-bin ] && ln -sfn /www/cgi-bin /www-luci/cgi-bin
-
-[ -f /usr/lib/uhttpd_lua.so ] && \
-	uci add_list uhttpd.luci.lua_prefix='/cgi-bin/luci=/usr/lib/lua/luci/sgi/uhttpd.lua'
-[ -f /usr/lib/uhttpd_ucode.so ] && \
-	uci add_list uhttpd.luci.ucode_prefix='/cgi-bin/luci=/usr/share/ucode/luci/uhttpd.uc'
-
+uci commit luci
 uci commit uhttpd
 /etc/init.d/uhttpd restart
 
@@ -64,7 +56,6 @@ rm -f /usr/lib/lua/luci/view/admin_status/index/minidlna.htm
 
 rm -f /www/luci-static/resources/view/status/include/70_ddns.js
 rm -f /www/luci-static/resources/view/status/include/80_upnp.js
-sed -i "/view.status.include.50_dsl/d" /www/luci-static/resources/view/status/index.js
 
 sed -i 's/\"services\"/\"nas\"/g' /usr/lib/lua/luci/controller/aria2.lua
 sed -i 's/services/nas/g' /usr/lib/lua/luci/view/aria2/overview_status.htm
@@ -95,12 +86,12 @@ sed -i '/check_signature/d' /etc/opkg.conf
 sed -i '/REDIRECT --to-ports 53/d' /etc/firewall.user
 
 sed -i '/DISTRIB_REVISION/d' /etc/openwrt_release
-echo "DISTRIB_REVISION='R26.05.20'" >> /etc/openwrt_release
+echo "DISTRIB_REVISION='R26.05.21'" >> /etc/openwrt_release
 sed -i '/DISTRIB_DESCRIPTION/d' /etc/openwrt_release
 echo "DISTRIB_DESCRIPTION='LEDE '" >> /etc/openwrt_release
 
 sed -i '/OPENWRT_RELEASE/d' /usr/lib/os-release
-echo 'OPENWRT_RELEASE="LEDE R26.05.20"' >> /usr/lib/os-release
+echo 'OPENWRT_RELEASE="LEDE R26.05.21"' >> /usr/lib/os-release
 
 sed -i '/log-facility/d' /etc/dnsmasq.conf
 echo "log-facility=/dev/null" >> /etc/dnsmasq.conf

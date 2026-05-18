@@ -23,7 +23,7 @@ endef
 define Package/erouter-web/description
 	Install Vue web UI from 0_web/dist.
 	Vue home page replaces /www/index.html on first boot.
-	LuCI remains available at /cgi-bin/luci.
+	LuCI entry at /luci/ (redirects to /cgi-bin/luci/) on the same HTTP port 80.
 endef
 
 define Build/Prepare
