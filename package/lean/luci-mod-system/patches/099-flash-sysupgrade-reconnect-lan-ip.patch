@@ -1,0 +1,82 @@
+--- a/htdocs/luci-static/resources/view/system/flash.js
++++ b/htdocs/luci-static/resources/view/system/flash.js
+@@ -5,6 +5,7 @@
+ 'require rpc';
+ 'require fs';
+ 'require ui';
++'require uci';
+ 
+ const isReadonlyView = !L.hasViewPermission();
+ 
+@@ -71,12 +72,30 @@ return view.extend({
+ 			fs.trimmed('/proc/sys/kernel/hostname'),
+ 			fs.trimmed('/proc/mtd'),
+ 			fs.trimmed('/proc/partitions'),
+-			fs.trimmed('/proc/mounts')
++			fs.trimmed('/proc/mounts'),
++			L.resolveDefault(uci.load('network'), {}).then(function() {
++				return uci.get('network', 'lan', 'ipaddr');
++			})
+ 		];
+ 
+ 		return Promise.all(tasks);
+ 	},
+ 
++	/* 刷机/重启后重连用：优先当前访问地址，其次 UCI 中的 LAN IP */
++	getReconnectHosts(includeCurrent) {
++		const hosts = [];
++
++		if (includeCurrent)
++			hosts.push(window.location.host);
++
++		if (this._lanIp)
++			hosts.push(this._lanIp);
++
++		return hosts.filter(function(h, i, a) {
++			return h && a.indexOf(h) === i;
++		});
++	},
++
+ 	handleBackup(ev) {
+ 		const form = E('form', {
+ 			method: 'post',
+@@ -101,7 +120,7 @@ return view.extend({
+ 		/* Currently the sysupgrade rpc call will not return, hence no promise handling */
+ 		fs.exec('/sbin/firstboot', [ '-r', '-y' ]);
+ 
+-		ui.awaitReconnect('192.168.1.1', 'immortalwrt.lan');
++		ui.awaitReconnect.apply(ui, this.getReconnectHosts(false));
+ 	},
+ 
+ 	handleRestore(ev) {
+@@ -163,7 +182,7 @@ return view.extend({
+ 					E('p', { 'class': 'spinning' }, _('The system is rebooting now. If the restored configuration changed the current LAN IP address, you might need to reconnect manually.'))
+ 				]);
+ 
+-				ui.awaitReconnect(window.location.host, '192.168.1.1', 'immortalwrt.lan');
++				ui.awaitReconnect.apply(ui, this.getReconnectHosts(true));
+ 			}, this))
+ 			.catch(function(e) { ui.addNotification(null, E('p', e.message)) })
+ 			.finally(function() { btn.firstChild.data = _('Upload archive...') });
+@@ -335,9 +354,9 @@ return view.extend({
+ 		fs.exec('/sbin/sysupgrade', args);
+ 
+ 		if (opts['keep'][0].checked)
+-			ui.awaitReconnect(window.location.host);
++			ui.awaitReconnect.apply(ui, this.getReconnectHosts(true));
+ 		else
+-			ui.awaitReconnect('192.168.1.1', 'immortalwrt.lan');
++			ui.awaitReconnect.apply(ui, this.getReconnectHosts(false));
+ 	},
+ 
+ 	handleBackupList(ev) {
+@@ -373,7 +392,8 @@ return view.extend({
+ 		});
+ 	},
+ 
+-	render([p_fstat, hostname, procmtd, procpart, procmounts]) {
++	render([p_fstat, hostname, procmtd, procpart, procmounts, lanIp]) {
++		this._lanIp = lanIp;
+ 		const has_sysupgrade = (p_fstat.type == 'file');
+ 		const has_rootfs_data = (procmtd.match(/"rootfs_data"/) != null) || (procmounts.match("overlayfs:/overlay / ") != null);
+ 		const storage_size = findStorageSize(procmtd, procpart);
