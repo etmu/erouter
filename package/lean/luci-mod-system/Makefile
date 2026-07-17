@@ -1,5 +1,6 @@
 #
 # 覆盖 feeds 中同名包，附加 patches/ 下补丁（刷机重连地址等）
+# htdocs/、root/ 为指向 feeds 的符号链接，供 luci.mk 的 prepare/install 识别
 #
 include $(TOPDIR)/rules.mk
 
