@@ -200,6 +200,7 @@ rebuild-erouter: ensure-container
 download: ensure-container
 	@echo "==> make download -j$(JOBS) ($(if $(USE_SOCKS),SOCKS $(SOCKS_URL),无SOCKS), 镜像 $(MIRROR))"
 	$(DOWNLOAD_ETMU) bash -lc 'set -euo pipefail; cd /home/etmu/lede; \
+		rm -f scripts/localmirrors; \
 		printf "%s\n" "$(MIRROR)" > scripts/localmirrors; \
 		if [ -f .config ]; then \
 			if grep -q "^CONFIG_LOCALMIRROR=" .config; then \
