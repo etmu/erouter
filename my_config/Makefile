@@ -129,7 +129,7 @@ update-web:
 	else \
 		cd $(WEB_DIR) && \
 		$(GIT_SAFE) remote set-url origin $(WEB_REPO) && \
-		$(GIT_SAFE) fetch --depth 1 --prune origin $(WEB_BRANCH) && \
+		$(GIT_SAFE) fetch --depth 1 --prune origin refs/heads/$(WEB_BRANCH):refs/remotes/origin/$(WEB_BRANCH) && \
 		if [ -n "$$($(GIT_SAFE) status --porcelain)" ]; then \
 			echo "错误: etmu-web 有未提交改动"; $(GIT_SAFE) status --short; exit 1; \
 		fi && \
@@ -147,7 +147,7 @@ update-edev:
 	else \
 		cd $(EDEV_DIR) && \
 		$(GIT_SAFE) remote set-url origin $(EDEV_REPO) && \
-		$(GIT_SAFE) fetch --depth 1 --prune origin $(EDEV_BRANCH) && \
+		$(GIT_SAFE) fetch --depth 1 --prune origin refs/heads/$(EDEV_BRANCH):refs/remotes/origin/$(EDEV_BRANCH) && \
 		if [ -n "$$($(GIT_SAFE) status --porcelain)" ]; then \
 			echo "错误: etmu-edev 有未提交改动"; $(GIT_SAFE) status --short; exit 1; \
 		fi && \
@@ -160,7 +160,7 @@ update-edev:
 update-lede: ensure-container
 	@echo "==> 更新 lede ($(BRANCH), depth=1)"
 	$(DOCKER_ETMU) bash -lc 'set -euo pipefail; cd /home/etmu/lede; \
-		git fetch --depth 1 --prune origin $(BRANCH); \
+		git fetch --depth 1 --prune origin refs/heads/$(BRANCH):refs/remotes/origin/$(BRANCH); \
 		if [ -n "$$(git status --porcelain)" ]; then \
 			echo "错误: lede 有未提交改动"; git status --short; exit 1; \
 		fi; \
