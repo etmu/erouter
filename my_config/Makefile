@@ -4,74 +4,107 @@
 # 布局（与 LEDE 依赖/产物对齐，均在 etmu 挂载下）:
 #   etmu/lede/              固件源码
 #   etmu/lede/dl/           软件依赖包（make download）
-#   etmu/lede/dl/etmu-web/  前端源码（git）
+#   etmu/lede/dl/etmu-web/  前端源码（git · WEB_BRANCH）
+#   etmu/lede/dl/etmu-edev/ 设备代理源码（git · EDEV_BRANCH）
 #   etmu/lede/bin/etmu-web/ 前端构建产物（与 bin/targets 同级）
 #   etmu/lede/bin/targets/...  固件产物
 #
 #   cd .../lede/my_config && make
-#   make JOBS=4 BRANCH=mt1300 WEB_BRANCH=web_mt1300
+#   make JOBS=4 BRANCH=mt1300 WEB_BRANCH=web_mt1300 EDEV_BRANCH=edev
 
 MK_DIR    := $(abspath $(dir $(lastword $(MAKEFILE_LIST))))
 LEDE_DIR  := $(abspath $(MK_DIR)/..)
 ETMU_DIR  := $(abspath $(MK_DIR)/../..)
 
-# 前端源码：放在 dl/ 下，与其它下载依赖同级
 WEB_DIR   := $(LEDE_DIR)/dl/etmu-web
-# 前端产物：与固件一样进 bin/
+EDEV_DIR  := $(LEDE_DIR)/dl/etmu-edev
 DIST_DIR  := $(LEDE_DIR)/bin/etmu-web
 
 CONTAINER  ?= ubuntu_mt1300
 BRANCH     ?= mt1300
 WEB_BRANCH ?= web_mt1300
+EDEV_BRANCH?= edev
 WEB_REPO   ?= https://etmu:EnchantedTMU123@gitee.com/etmu/erouter
+EDEV_REPO  ?= $(WEB_REPO)
 JOBS       ?= $(shell nproc 2>/dev/null || echo 4)
 MIRROR     ?= https://mirrors.tuna.tsinghua.edu.cn/openwrt/sources
 
+# 已在容器内（/.dockerenv）则本地执行；宿主机则 docker exec
+IN_DOCKER := $(shell test -f /.dockerenv && echo 1)
+ifeq ($(IN_DOCKER),1)
+DOCKER_ETMU = env ALL_PROXY= all_proxy= http_proxy= https_proxy= \
+	HTTP_PROXY= HTTPS_PROXY= DOWNLOAD_MIRROR=$(MIRROR)
+else
 DOCKER_ETMU = docker exec -u etmu \
 	-e ALL_PROXY= -e all_proxy= -e http_proxy= -e https_proxy= \
 	-e HTTP_PROXY= -e HTTPS_PROXY= \
 	-e DOWNLOAD_MIRROR=$(MIRROR) \
 	$(CONTAINER)
+endif
 
-.PHONY: all help update update-web update-lede config build download firmware make ensure-container
+GIT_SAFE = git -c safe.directory=*
+
+.PHONY: all help update update-web update-edev update-lede config build download firmware make ensure-container
 
 all: update build config download firmware
 
 help:
 	@echo "目录: $(MK_DIR)"
-	@echo "目标: all | update | update-web | update-lede | config | build | download | firmware"
-	@echo "变量: CONTAINER=$(CONTAINER) BRANCH=$(BRANCH) WEB_BRANCH=$(WEB_BRANCH) JOBS=$(JOBS)"
-	@echo "      WEB_REPO=$(WEB_REPO)"
-	@echo "      MIRROR=$(MIRROR)"
-	@echo "路径: WEB源码=$(WEB_DIR)"
-	@echo "      WEB产物=$(DIST_DIR)"
-	@echo "      LEDE=$(LEDE_DIR)"
+	@echo "目标: all | update | update-web | update-edev | update-lede | config | build | download | firmware"
+	@echo "变量: CONTAINER=$(CONTAINER) BRANCH=$(BRANCH) WEB_BRANCH=$(WEB_BRANCH) EDEV_BRANCH=$(EDEV_BRANCH) JOBS=$(JOBS)"
+	@echo "      WEB_REPO=$(WEB_REPO) EDEV_REPO=$(EDEV_REPO)"
+	@echo "路径: WEB=$(WEB_DIR) EDEV=$(EDEV_DIR) DIST=$(DIST_DIR) LEDE=$(LEDE_DIR)"
+	@echo "执行: $(if $(IN_DOCKER),容器内本地,宿主机→docker $(CONTAINER))"
 
+ifeq ($(IN_DOCKER),1)
+ensure-container:
+	@true
+else
 ensure-container:
 	@docker inspect $(CONTAINER) >/dev/null 2>&1 || { echo "错误: 无容器 $(CONTAINER)"; exit 1; }
 	@if [ "$$(docker inspect -f '{{.State.Status}}' $(CONTAINER))" != "running" ]; then \
 		echo "启动 $(CONTAINER)..."; docker start $(CONTAINER) >/dev/null; \
 	fi
+endif
 
-update: update-web update-lede
+update: update-web update-edev update-lede
 
 update-web:
 	@echo "==> 更新前端源码 → $(WEB_DIR) (branch=$(WEB_BRANCH))"
 	@mkdir -p $(LEDE_DIR)/dl
 	@if [ ! -d $(WEB_DIR)/.git ]; then \
 		rm -rf $(WEB_DIR); \
-		git clone -b $(WEB_BRANCH) --single-branch --depth 1 $(WEB_REPO) $(WEB_DIR); \
+		$(GIT_SAFE) clone -b $(WEB_BRANCH) --single-branch --depth 1 $(WEB_REPO) $(WEB_DIR); \
 	else \
 		cd $(WEB_DIR) && \
-		git remote set-url origin $(WEB_REPO) && \
-		git fetch --depth 1 --prune origin $(WEB_BRANCH) && \
-		if [ -n "$$(git status --porcelain)" ]; then \
-			echo "错误: etmu-web 有未提交改动"; git status --short; exit 1; \
+		$(GIT_SAFE) remote set-url origin $(WEB_REPO) && \
+		$(GIT_SAFE) fetch --depth 1 --prune origin $(WEB_BRANCH) && \
+		if [ -n "$$($(GIT_SAFE) status --porcelain)" ]; then \
+			echo "错误: etmu-web 有未提交改动"; $(GIT_SAFE) status --short; exit 1; \
 		fi && \
-		git checkout -B $(WEB_BRANCH) origin/$(WEB_BRANCH) && \
-		git reset --hard origin/$(WEB_BRANCH); \
+		$(GIT_SAFE) checkout -B $(WEB_BRANCH) origin/$(WEB_BRANCH) && \
+		$(GIT_SAFE) reset --hard origin/$(WEB_BRANCH); \
 	fi
-	@echo "etmu-web: $$(git -C $(WEB_DIR) rev-parse --short HEAD)"
+	@echo "etmu-web: $$($(GIT_SAFE) -C $(WEB_DIR) rev-parse --short HEAD)"
+
+update-edev:
+	@echo "==> 更新设备代理源码 → $(EDEV_DIR) (branch=$(EDEV_BRANCH))"
+	@mkdir -p $(LEDE_DIR)/dl
+	@if [ ! -d $(EDEV_DIR)/.git ]; then \
+		rm -rf $(EDEV_DIR); \
+		$(GIT_SAFE) clone -b $(EDEV_BRANCH) --single-branch --depth 1 $(EDEV_REPO) $(EDEV_DIR); \
+	else \
+		cd $(EDEV_DIR) && \
+		$(GIT_SAFE) remote set-url origin $(EDEV_REPO) && \
+		$(GIT_SAFE) fetch --depth 1 --prune origin $(EDEV_BRANCH) && \
+		if [ -n "$$($(GIT_SAFE) status --porcelain)" ]; then \
+			echo "错误: etmu-edev 有未提交改动"; $(GIT_SAFE) status --short; exit 1; \
+		fi && \
+		$(GIT_SAFE) checkout -B $(EDEV_BRANCH) origin/$(EDEV_BRANCH) && \
+		$(GIT_SAFE) reset --hard origin/$(EDEV_BRANCH); \
+	fi
+	@test -f $(EDEV_DIR)/files/usr/sbin/erouterd || { echo "错误: 缺少 erouterd"; exit 1; }
+	@echo "etmu-edev: $$($(GIT_SAFE) -C $(EDEV_DIR) rev-parse --short HEAD)"
 
 update-lede: ensure-container
 	@echo "==> 更新 lede ($(BRANCH), depth=1)"
@@ -84,11 +117,10 @@ update-lede: ensure-container
 		git reset --hard origin/$(BRANCH); \
 		echo "lede: $$(git rev-parse --short HEAD)"'
 
-config:
+config: ensure-container
 	@echo "==> 应用 my_config/.config"
 	@test -f $(MK_DIR)/.config || { echo "错误: 缺少 $(MK_DIR)/.config"; exit 1; }
 	/bin/cp -f $(MK_DIR)/.config $(LEDE_DIR)/.config
-	@# feeds install 会重建该链接，需去掉以便使用 package/lean 覆盖+补丁
 	@rm -f $(LEDE_DIR)/package/feeds/luci/luci-mod-system
 	$(DOCKER_ETMU) bash -lc 'set -euo pipefail; cd /home/etmu/lede; make oldconfig </dev/null || yes "" | make oldconfig'
 
@@ -117,7 +149,8 @@ download: ensure-container
 		make download -j$(JOBS)'
 
 firmware: ensure-container build
-	@echo "==> make V=s -j$(JOBS)（含 erouter-web 前端）"
+	@echo "==> make V=s -j$(JOBS)（含 erouter-web / erouter-edev）"
+	@test -f $(EDEV_DIR)/files/usr/sbin/erouterd || { echo "提示: 缺少 etmu-edev，先 make update-edev"; }
 	$(DOCKER_ETMU) bash -lc 'set -euo pipefail; cd /home/etmu/lede; make V=s -j$(JOBS)'
 
 make: firmware
