@@ -42,8 +42,9 @@ VERSION      ?= $(shell tr -d ' \t\r\n' < "$(VERSION_FILE)" 2>/dev/null)
 DBG_MAX      ?= 99
 # NOTES 默认在 upload 配方内由 lede/web/edev 最新 commit 生成；可 NOTES=... 覆盖
 NOTES        ?=
-# make firmware 前是否自动调试段 +1 再注入；BUMP=0 关闭（同版本重编）
+# 内容变更时默认 +1；BUMP=0 禁止自动递增；FORCE=1 强制递增并重编
 BUMP         ?= 1
+FORCE        ?= 0
 # 与 mw erouter.upload_token 开发约定一致；.upload_token 或命令行可覆盖
 UPLOAD_TOKEN ?= erouter
 UPLOAD_URL   ?= http://8.138.182.21:8081/erouter/firmware/
@@ -108,7 +109,7 @@ endif
 GIT_SAFE = git -c safe.directory='*'
 
 .PHONY: all help update update-web update-edev update-lede config build rebuild-erouter download \
-	1 2 3 tuna ustc nju socks proxy firmware firmware-bump upload inject-version bump-version make ensure-container
+	1 2 3 tuna ustc nju socks proxy firmware firmware-bump erouter-prepare upload inject-version bump-version make ensure-container
 
 all: update build config download firmware
 
@@ -119,13 +120,13 @@ all: update build config download firmware
 help:
 	@echo "目录: $(MK_DIR)"
 	@echo "目标: all | update | update-web | update-edev | update-lede | config | build | rebuild-erouter | download | firmware | upload"
-	@echo "说明: make firmware = build + 注入 Release + 强制重编 erouter-web/edev 包 + 出固件"
+	@echo "说明: make firmware = build + 按需递增/重编 erouter + 出固件"
 	@echo "Release: VERSION=$(VERSION)（$(VERSION_FILE)；大.小.调试，百进制调试≤$(DBG_MAX)）"
-	@echo "固件: make firmware 默认先 +1 再注入 Release（BUMP=0 跳过递增）"
+	@echo "固件: 自动对比 web/edev/dist 指纹；有变更才 +1 并 clean 重编 erouter"
+	@echo "      BUMP=0 禁止自动 +1；FORCE=1 强制 +1 并重编；make bump-version 手动 +1"
 	@echo "上传: make upload  →  POST $(UPLOAD_URL)；用当前 VERSION（与已编固件一致）"
 	@echo "      令牌: 默认 UPLOAD_TOKEN=$(UPLOAD_TOKEN)；可 .upload_token 或命令行覆盖"
 	@echo "      变量: BOARD=$(BOARD) CHANNEL=$(CHANNEL) VERSION=$(VERSION) FW=路径 NOTES=覆盖"
-	@echo "版本: make bump-version  →  调试段 +1（>$(DBG_MAX) → 小版本+1、调试归零）"
 	@echo "下载镜像预置:"
 	@echo "      make download / make download 1 / tuna   # $(MIRROR_1)"
 	@echo "      make download 2 / ustc                   # $(MIRROR_2)"
@@ -216,8 +217,11 @@ build: ensure-container
 	@! grep -q 'You did it' $(DIST_DIR)/assets/*.js 2>/dev/null || { \
 		echo "错误: 产物仍是 Vite 欢迎页，检查 $(WEB_DIR) 是否已 update-web"; exit 1; }
 
-# OpenWrt 不感知 dl/etmu-* 的 git 变更；必须 clean 后才会重跑 package Compile/install
-# 注入 Release 到 rootfs overlay + 包安装路径共用 my_config/VERSION
+# OpenWrt 不感知 dl/etmu-* 的 git 变更；内容变更时才 clean 重编并递增 Release
+# 指纹：web HEAD + edev HEAD + dist/index.html；stamp 在成功重编后写入
+STAMP_FILE   ?= $(MK_DIR)/.erouter-stamp
+EROUTER_STATE?= $(MK_DIR)/.erouter-state
+
 inject-version:
 	@test -f "$(VERSION_FILE)" || { echo "错误: 缺少 $(VERSION_FILE)"; exit 1; }
 	@ver=$$(tr -d ' \t\r\n' < "$(VERSION_FILE)"); \
@@ -228,7 +232,6 @@ inject-version:
 	mkdir -p "$(LEDE_DIR)/files/etc/erouter"; \
 	printf '%s\n' "$$ver" > "$(LEDE_DIR)/files/etc/erouter/VERSION"; \
 	echo "==> Release $$ver → files/etc/erouter/VERSION"
-
 
 # 调试段 +1；超过 DBG_MAX 则小版本 +1、调试归零（百进制）
 bump-version:
@@ -244,13 +247,62 @@ bump-version:
 	printf '%s.%s.%s\n' "$$maj" "$$min" "$$dbg" > "$(VERSION_FILE)"; \
 	echo "==> 版本 $$ver → $$(tr -d ' \t\r\n' < "$(VERSION_FILE)")"
 
-rebuild-erouter: ensure-container inject-version
-	@echo "==> 强制重编 erouter-web / erouter-edev（避免用缓存旧 ipk）"
+# build 之后调用：对比指纹，决定是否 bump / 强制重编 erouter 包
+erouter-prepare:
 	@test -f $(WEB_DIR)/package.json || { echo "错误: 缺少 etmu-web，先 make update-web"; exit 1; }
 	@test -f $(EDEV_DIR)/files/usr/sbin/erouterd || { echo "错误: 缺少 etmu-edev，先 make update-edev"; exit 1; }
-	$(DOCKER_ETMU) bash -lc 'set -euo pipefail; cd /home/etmu/lede; \
-		make package/erouter-web/clean package/erouter-edev/clean; \
-		make package/erouter-web/compile package/erouter-edev/compile -j$(JOBS)'
+	@test -f $(DIST_DIR)/index.html || { echo "错误: 缺少前端产物，先 make build"; exit 1; }
+	@web=$$($(GIT_SAFE) -C $(WEB_DIR) rev-parse HEAD 2>/dev/null || echo none); \
+	edev=$$($(GIT_SAFE) -C $(EDEV_DIR) rev-parse HEAD 2>/dev/null || echo none); \
+	dist=$$(sha256sum $(DIST_DIR)/index.html | awk '{print $$1}'); \
+	fp="web=$$web|edev=$$edev|dist=$$dist"; \
+	old=$$(cat "$(STAMP_FILE)" 2>/dev/null || true); \
+	ver=$$(tr -d ' \t\r\n' < "$(VERSION_FILE)"); \
+	inj=$$(tr -d ' \t\r\n' < "$(LEDE_DIR)/files/etc/erouter/VERSION" 2>/dev/null || true); \
+	need_bump=0; need_rebuild=0; \
+	if [ "$(FORCE)" = "1" ]; then \
+		need_bump=1; need_rebuild=1; \
+		echo "==> FORCE=1：递增版本并强制重编 erouter"; \
+	elif [ "$$fp" != "$$old" ]; then \
+		need_bump=1; need_rebuild=1; \
+		echo "==> erouter 输入有变更：将递增 Release 并重编包"; \
+		echo "    旧: $${old:-<none>}"; \
+		echo "    新: $$fp"; \
+	elif [ "$$ver" != "$$inj" ]; then \
+		need_rebuild=1; \
+		echo "==> VERSION($$ver) 与已注入($${inj:-空})不一致：重编包（不自动 +1）"; \
+	else \
+		echo "==> erouter 输入未变：跳过版本递增与强制重编"; \
+	fi; \
+	if [ "$(BUMP)" = "0" ]; then need_bump=0; fi; \
+	printf 'FP=%s\nNEED_BUMP=%s\nNEED_REBUILD=%s\n' "$$fp" "$$need_bump" "$$need_rebuild" > "$(EROUTER_STATE)"
+
+firmware-bump: erouter-prepare
+	@need=$$(sed -n 's/^NEED_BUMP=//p' "$(EROUTER_STATE)"); \
+	if [ "$$need" = "1" ]; then \
+		$(MAKE) bump-version; \
+	else \
+		echo "==> 保持 Release $$(tr -d ' \t\r\n' < "$(VERSION_FILE)")"; \
+	fi
+
+rebuild-erouter: ensure-container inject-version
+	@need=$$(sed -n 's/^NEED_REBUILD=//p' "$(EROUTER_STATE)" 2>/dev/null || echo 1); \
+	fp=$$(sed -n 's/^FP=//p' "$(EROUTER_STATE)" 2>/dev/null || true); \
+	if [ "$$need" = "1" ]; then \
+		echo "==> 强制重编 erouter-web / erouter-edev"; \
+		$(DOCKER_ETMU) bash -lc 'set -euo pipefail; cd /home/etmu/lede; \
+			make package/erouter-web/clean package/erouter-edev/clean; \
+			make package/erouter-web/compile package/erouter-edev/compile -j$(JOBS)'; \
+	else \
+		echo "==> 跳过 erouter 包 clean（输入未变）"; \
+		$(DOCKER_ETMU) bash -lc 'set -euo pipefail; cd /home/etmu/lede; \
+			make package/erouter-web/compile package/erouter-edev/compile -j$(JOBS)'; \
+	fi; \
+	if [ -n "$$fp" ]; then printf '%s\n' "$$fp" > "$(STAMP_FILE)"; fi
+
+firmware: ensure-container build erouter-prepare firmware-bump rebuild-erouter
+	@echo "==> make V=s -j$(JOBS)"
+	$(DOCKER_ETMU) bash -lc 'set -euo pipefail; cd /home/etmu/lede; make V=s -j$(JOBS)'
 
 download: ensure-container
 	@echo "==> make download -j$(JOBS) ($(if $(USE_SOCKS),SOCKS $(SOCKS_URL),无SOCKS), 镜像 $(MIRROR))"
@@ -265,17 +317,6 @@ download: ensure-container
 			fi; \
 		fi; \
 		make download -j$(JOBS)'
-
-firmware-bump:
-	@if [ "$(BUMP)" = "0" ]; then \
-		echo "==> 跳过版本递增（BUMP=0），Release=$$(tr -d ' \t\r\n' < "$(VERSION_FILE)")"; \
-	else \
-		$(MAKE) bump-version; \
-	fi
-
-firmware: ensure-container firmware-bump build rebuild-erouter
-	@echo "==> make V=s -j$(JOBS)（含已强制重编的 erouter-web / erouter-edev）"
-	$(DOCKER_ETMU) bash -lc 'set -euo pipefail; cd /home/etmu/lede; make V=s -j$(JOBS)'
 
 # 不依赖 docker：直接 curl 上传本地 sysupgrade（产物在挂载上）
 upload:
