@@ -83,7 +83,7 @@ DOWNLOAD_ETMU = $(DOCKER_ETMU)
 endif
 endif
 
-GIT_SAFE = git -c safe.directory=*
+GIT_SAFE = git -c safe.directory='*'
 
 .PHONY: all help update update-web update-edev update-lede config build rebuild-erouter download \
 	1 2 3 tuna ustc nju socks proxy firmware make ensure-container
@@ -123,37 +123,15 @@ update: update-web update-edev update-lede
 update-web:
 	@echo "==> 更新前端源码 → $(WEB_DIR) (branch=$(WEB_BRANCH))"
 	@mkdir -p $(LEDE_DIR)/dl
-	@if [ ! -d $(WEB_DIR)/.git ]; then \
-		rm -rf $(WEB_DIR); \
-		$(GIT_SAFE) clone -b $(WEB_BRANCH) --single-branch --depth 1 $(WEB_REPO) $(WEB_DIR); \
-	else \
-		cd $(WEB_DIR) && \
-		$(GIT_SAFE) remote set-url origin $(WEB_REPO) && \
-		$(GIT_SAFE) fetch --depth 1 --prune origin refs/heads/$(WEB_BRANCH):refs/remotes/origin/$(WEB_BRANCH) && \
-		if [ -n "$$($(GIT_SAFE) status --porcelain)" ]; then \
-			echo "错误: etmu-web 有未提交改动"; $(GIT_SAFE) status --short; exit 1; \
-		fi && \
-		$(GIT_SAFE) checkout -B $(WEB_BRANCH) origin/$(WEB_BRANCH) && \
-		$(GIT_SAFE) reset --hard origin/$(WEB_BRANCH); \
-	fi
+	@rm -rf $(WEB_DIR)
+	@$(GIT_SAFE) clone -b $(WEB_BRANCH) --single-branch --depth 1 $(WEB_REPO) $(WEB_DIR)
 	@echo "etmu-web: $$($(GIT_SAFE) -C $(WEB_DIR) rev-parse --short HEAD)"
 
 update-edev:
 	@echo "==> 更新设备代理源码 → $(EDEV_DIR) (branch=$(EDEV_BRANCH))"
 	@mkdir -p $(LEDE_DIR)/dl
-	@if [ ! -d $(EDEV_DIR)/.git ]; then \
-		rm -rf $(EDEV_DIR); \
-		$(GIT_SAFE) clone -b $(EDEV_BRANCH) --single-branch --depth 1 $(EDEV_REPO) $(EDEV_DIR); \
-	else \
-		cd $(EDEV_DIR) && \
-		$(GIT_SAFE) remote set-url origin $(EDEV_REPO) && \
-		$(GIT_SAFE) fetch --depth 1 --prune origin refs/heads/$(EDEV_BRANCH):refs/remotes/origin/$(EDEV_BRANCH) && \
-		if [ -n "$$($(GIT_SAFE) status --porcelain)" ]; then \
-			echo "错误: etmu-edev 有未提交改动"; $(GIT_SAFE) status --short; exit 1; \
-		fi && \
-		$(GIT_SAFE) checkout -B $(EDEV_BRANCH) origin/$(EDEV_BRANCH) && \
-		$(GIT_SAFE) reset --hard origin/$(EDEV_BRANCH); \
-	fi
+	@rm -rf $(EDEV_DIR)
+	@$(GIT_SAFE) clone -b $(EDEV_BRANCH) --single-branch --depth 1 $(EDEV_REPO) $(EDEV_DIR)
 	@test -f $(EDEV_DIR)/files/usr/sbin/erouterd || { echo "错误: 缺少 erouterd"; exit 1; }
 	@echo "etmu-edev: $$($(GIT_SAFE) -C $(EDEV_DIR) rev-parse --short HEAD)"
 
