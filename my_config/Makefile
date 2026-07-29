@@ -40,6 +40,8 @@ VERSION_FILE ?= $(MK_DIR)/VERSION
 VERSION      ?= $(shell tr -d ' \t\r\n' < "$(VERSION_FILE)" 2>/dev/null)
 # NOTES 默认在 upload 配方内由 lede/web/edev 最新 commit 生成；可 NOTES=... 覆盖
 NOTES        ?=
+# 上传成功后是否自动调试段 +1（进位规则见 version 规范）；BUMP=0 关闭
+BUMP         ?= 1
 # 与 mw erouter.upload_token 开发约定一致；.upload_token 或命令行可覆盖
 UPLOAD_TOKEN ?= erouter
 UPLOAD_URL   ?= http://8.138.182.21:8081/erouter/firmware/
@@ -104,7 +106,7 @@ endif
 GIT_SAFE = git -c safe.directory='*'
 
 .PHONY: all help update update-web update-edev update-lede config build rebuild-erouter download \
-	1 2 3 tuna ustc nju socks proxy firmware upload inject-version make ensure-container
+	1 2 3 tuna ustc nju socks proxy firmware upload inject-version bump-version make ensure-container
 
 all: update build config download firmware
 
@@ -118,8 +120,10 @@ help:
 	@echo "说明: make firmware = build + 注入 Release + 强制重编 erouter-web/edev 包 + 出固件"
 	@echo "Release: VERSION=$(VERSION)（文件 $(VERSION_FILE)；大.小.调试，调试≤20）"
 	@echo "上传: make upload  →  POST $(UPLOAD_URL)；notes 默认=lede/web/edev 最新 commit"
+	@echo "      成功后默认调试段 +1 写回 VERSION（BUMP=0 关闭）；下次 firmware 用新号"
 	@echo "      令牌: 默认 UPLOAD_TOKEN=$(UPLOAD_TOKEN)；可 .upload_token 或命令行覆盖"
 	@echo "      变量: BOARD=$(BOARD) CHANNEL=$(CHANNEL) VERSION=$(VERSION) FW=路径 NOTES=覆盖"
+	@echo "版本: make bump-version  →  立即调试段 +1（进位：调试>20 → 小版本+1、调试归零）"
 	@echo "下载镜像预置:"
 	@echo "      make download / make download 1 / tuna   # $(MIRROR_1)"
 	@echo "      make download 2 / ustc                   # $(MIRROR_2)"
@@ -223,6 +227,20 @@ inject-version:
 	printf '%s\n' "$$ver" > "$(LEDE_DIR)/files/etc/erouter/VERSION"; \
 	echo "==> Release $$ver → files/etc/erouter/VERSION"
 
+# 调试段 +1；满 20 则小版本 +1、调试归零（大.小.调试）
+bump-version:
+	@test -f "$(VERSION_FILE)" || { echo "错误: 缺少 $(VERSION_FILE)"; exit 1; }
+	@ver=$$(tr -d ' \t\r\n' < "$(VERSION_FILE)"); \
+	echo "$$ver" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$$' || { \
+		echo "错误: Release 须为 大.小.调试，当前: $$ver"; exit 1; }; \
+	maj=$$(echo "$$ver" | cut -d. -f1); \
+	min=$$(echo "$$ver" | cut -d. -f2); \
+	dbg=$$(echo "$$ver" | cut -d. -f3); \
+	dbg=$$((dbg + 1)); \
+	if [ "$$dbg" -gt 20 ]; then min=$$((min + 1)); dbg=0; fi; \
+	printf '%s.%s.%s\n' "$$maj" "$$min" "$$dbg" > "$(VERSION_FILE)"; \
+	echo "==> 版本 $$ver → $$(tr -d ' \t\r\n' < "$(VERSION_FILE)")"
+
 rebuild-erouter: ensure-container inject-version
 	@echo "==> 强制重编 erouter-web / erouter-edev（避免用缓存旧 ipk）"
 	@test -f $(WEB_DIR)/package.json || { echo "错误: 缺少 etmu-web，先 make update-web"; exit 1; }
@@ -258,7 +276,7 @@ upload:
 	if [ -z "$$token" ]; then \
 		echo "错误: 上传令牌为空"; exit 1; \
 	fi; \
-	ver="$(VERSION)"; \
+	ver=$$(tr -d ' \t\r\n' < "$(VERSION_FILE)" 2>/dev/null || true); \
 	if [ -z "$$ver" ]; then \
 		echo "错误: 缺少 Release 版本（$(VERSION_FILE) 或 VERSION=）"; exit 1; \
 	fi; \
@@ -304,7 +322,13 @@ upload:
 	body=$$(printf '%s\n' "$$resp" | sed '$$d'); \
 	printf '%s\n' "$$body"; \
 	case "$$code" in \
-		201) echo "成功 HTTP $$code";; \
+		201) \
+			echo "成功 HTTP $$code"; \
+			if [ "$(BUMP)" = "0" ]; then \
+				echo "==> 跳过版本递增（BUMP=0）"; \
+			else \
+				$(MAKE) bump-version; \
+			fi;; \
 		*) echo "失败 HTTP $$code"; exit 1;; \
 	esac
 
