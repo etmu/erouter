@@ -35,12 +35,14 @@ WEB_REPO   ?= https://etmu:EnchantedTMU123@gitee.com/etmu/erouter
 EDEV_REPO  ?= $(WEB_REPO)
 JOBS       ?= $(shell nproc 2>/dev/null || echo 4)
 
-# Release 版本（大.小.调试）；前端/后端/插件各自另有版本，互不自动同步
+# Release 版本（大.小.调试，调试段百进制）；前端/后端/插件各自另有版本，互不自动同步
 VERSION_FILE ?= $(MK_DIR)/VERSION
 VERSION      ?= $(shell tr -d ' \t\r\n' < "$(VERSION_FILE)" 2>/dev/null)
+# 调试段上限（百进制：0～DBG_MAX，再 +1 则小版本进位）
+DBG_MAX      ?= 99
 # NOTES 默认在 upload 配方内由 lede/web/edev 最新 commit 生成；可 NOTES=... 覆盖
 NOTES        ?=
-# 上传成功后是否自动调试段 +1（进位规则见 version 规范）；BUMP=0 关闭
+# make firmware 前是否自动调试段 +1 再注入；BUMP=0 关闭（同版本重编）
 BUMP         ?= 1
 # 与 mw erouter.upload_token 开发约定一致；.upload_token 或命令行可覆盖
 UPLOAD_TOKEN ?= erouter
@@ -106,7 +108,7 @@ endif
 GIT_SAFE = git -c safe.directory='*'
 
 .PHONY: all help update update-web update-edev update-lede config build rebuild-erouter download \
-	1 2 3 tuna ustc nju socks proxy firmware upload inject-version bump-version make ensure-container
+	1 2 3 tuna ustc nju socks proxy firmware firmware-bump upload inject-version bump-version make ensure-container
 
 all: update build config download firmware
 
@@ -118,12 +120,12 @@ help:
 	@echo "目录: $(MK_DIR)"
 	@echo "目标: all | update | update-web | update-edev | update-lede | config | build | rebuild-erouter | download | firmware | upload"
 	@echo "说明: make firmware = build + 注入 Release + 强制重编 erouter-web/edev 包 + 出固件"
-	@echo "Release: VERSION=$(VERSION)（文件 $(VERSION_FILE)；大.小.调试，调试≤99）"
-	@echo "上传: make upload  →  POST $(UPLOAD_URL)；notes 默认=lede/web/edev 最新 commit"
-	@echo "      成功后默认调试段 +1 写回 VERSION（BUMP=0 关闭）；下次 firmware 用新号"
+	@echo "Release: VERSION=$(VERSION)（$(VERSION_FILE)；大.小.调试，百进制调试≤$(DBG_MAX)）"
+	@echo "固件: make firmware 默认先 +1 再注入 Release（BUMP=0 跳过递增）"
+	@echo "上传: make upload  →  POST $(UPLOAD_URL)；用当前 VERSION（与已编固件一致）"
 	@echo "      令牌: 默认 UPLOAD_TOKEN=$(UPLOAD_TOKEN)；可 .upload_token 或命令行覆盖"
 	@echo "      变量: BOARD=$(BOARD) CHANNEL=$(CHANNEL) VERSION=$(VERSION) FW=路径 NOTES=覆盖"
-	@echo "版本: make bump-version  →  立即调试段 +1（进位：调试>99 → 小版本+1、调试归零）"
+	@echo "版本: make bump-version  →  调试段 +1（>$(DBG_MAX) → 小版本+1、调试归零）"
 	@echo "下载镜像预置:"
 	@echo "      make download / make download 1 / tuna   # $(MIRROR_1)"
 	@echo "      make download 2 / ustc                   # $(MIRROR_2)"
@@ -222,13 +224,13 @@ inject-version:
 	echo "$$ver" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$$' || { \
 		echo "错误: Release 须为 大.小.调试，当前: $$ver"; exit 1; }; \
 	dbg=$$(echo "$$ver" | cut -d. -f3); \
-	[ "$$dbg" -le 99 ] || { echo "错误: 调试段须≤99，当前: $$ver"; exit 1; }; \
+	[ "$$dbg" -le $(DBG_MAX) ] || { echo "错误: 调试段须≤$(DBG_MAX)，当前: $$ver"; exit 1; }; \
 	mkdir -p "$(LEDE_DIR)/files/etc/erouter"; \
 	printf '%s\n' "$$ver" > "$(LEDE_DIR)/files/etc/erouter/VERSION"; \
 	echo "==> Release $$ver → files/etc/erouter/VERSION"
 
 
-# 调试段 +1；满 100 则小版本 +1、调试归零（大.小.调试）
+# 调试段 +1；超过 DBG_MAX 则小版本 +1、调试归零（百进制）
 bump-version:
 	@test -f "$(VERSION_FILE)" || { echo "错误: 缺少 $(VERSION_FILE)"; exit 1; }
 	@ver=$$(tr -d ' \t\r\n' < "$(VERSION_FILE)"); \
@@ -238,7 +240,7 @@ bump-version:
 	min=$$(echo "$$ver" | cut -d. -f2); \
 	dbg=$$(echo "$$ver" | cut -d. -f3); \
 	dbg=$$((dbg + 1)); \
-	if [ "$$dbg" -gt 99 ]; then min=$$((min + 1)); dbg=0; fi; \
+	if [ "$$dbg" -gt $(DBG_MAX) ]; then min=$$((min + 1)); dbg=0; fi; \
 	printf '%s.%s.%s\n' "$$maj" "$$min" "$$dbg" > "$(VERSION_FILE)"; \
 	echo "==> 版本 $$ver → $$(tr -d ' \t\r\n' < "$(VERSION_FILE)")"
 
@@ -264,7 +266,14 @@ download: ensure-container
 		fi; \
 		make download -j$(JOBS)'
 
-firmware: ensure-container build rebuild-erouter
+firmware-bump:
+	@if [ "$(BUMP)" = "0" ]; then \
+		echo "==> 跳过版本递增（BUMP=0），Release=$$(tr -d ' \t\r\n' < "$(VERSION_FILE)")"; \
+	else \
+		$(MAKE) bump-version; \
+	fi
+
+firmware: ensure-container firmware-bump build rebuild-erouter
 	@echo "==> make V=s -j$(JOBS)（含已强制重编的 erouter-web / erouter-edev）"
 	$(DOCKER_ETMU) bash -lc 'set -euo pipefail; cd /home/etmu/lede; make V=s -j$(JOBS)'
 
@@ -284,7 +293,7 @@ upload:
 	echo "$$ver" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$$' || { \
 		echo "错误: Release 须为 大.小.调试，当前: $$ver"; exit 1; }; \
 	dbg=$$(echo "$$ver" | cut -d. -f3); \
-	[ "$$dbg" -le 99 ] || { echo "错误: 调试段须≤99，当前: $$ver"; exit 1; }; \
+	[ "$$dbg" -le $(DBG_MAX) ] || { echo "错误: 调试段须≤$(DBG_MAX)，当前: $$ver"; exit 1; }; \
 	if [ -n "$(FW)" ]; then \
 		bin="$(FW)"; \
 	else \
@@ -323,13 +332,7 @@ upload:
 	body=$$(printf '%s\n' "$$resp" | sed '$$d'); \
 	printf '%s\n' "$$body"; \
 	case "$$code" in \
-		201) \
-			echo "成功 HTTP $$code"; \
-			if [ "$(BUMP)" = "0" ]; then \
-				echo "==> 跳过版本递增（BUMP=0）"; \
-			else \
-				$(MAKE) bump-version; \
-			fi;; \
+		201) echo "成功 HTTP $$code";; \
 		*) echo "失败 HTTP $$code"; exit 1;; \
 	esac
 
