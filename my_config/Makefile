@@ -118,12 +118,12 @@ help:
 	@echo "目录: $(MK_DIR)"
 	@echo "目标: all | update | update-web | update-edev | update-lede | config | build | rebuild-erouter | download | firmware | upload"
 	@echo "说明: make firmware = build + 注入 Release + 强制重编 erouter-web/edev 包 + 出固件"
-	@echo "Release: VERSION=$(VERSION)（文件 $(VERSION_FILE)；大.小.调试，调试≤20）"
+	@echo "Release: VERSION=$(VERSION)（文件 $(VERSION_FILE)；大.小.调试，调试≤99）"
 	@echo "上传: make upload  →  POST $(UPLOAD_URL)；notes 默认=lede/web/edev 最新 commit"
 	@echo "      成功后默认调试段 +1 写回 VERSION（BUMP=0 关闭）；下次 firmware 用新号"
 	@echo "      令牌: 默认 UPLOAD_TOKEN=$(UPLOAD_TOKEN)；可 .upload_token 或命令行覆盖"
 	@echo "      变量: BOARD=$(BOARD) CHANNEL=$(CHANNEL) VERSION=$(VERSION) FW=路径 NOTES=覆盖"
-	@echo "版本: make bump-version  →  立即调试段 +1（进位：调试>20 → 小版本+1、调试归零）"
+	@echo "版本: make bump-version  →  立即调试段 +1（进位：调试>99 → 小版本+1、调试归零）"
 	@echo "下载镜像预置:"
 	@echo "      make download / make download 1 / tuna   # $(MIRROR_1)"
 	@echo "      make download 2 / ustc                   # $(MIRROR_2)"
@@ -222,13 +222,13 @@ inject-version:
 	echo "$$ver" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$$' || { \
 		echo "错误: Release 须为 大.小.调试，当前: $$ver"; exit 1; }; \
 	dbg=$$(echo "$$ver" | cut -d. -f3); \
-	[ "$$dbg" -le 20 ] || { echo "错误: 调试段须≤20，当前: $$ver"; exit 1; }; \
+	[ "$$dbg" -le 99 ] || { echo "错误: 调试段须≤99，当前: $$ver"; exit 1; }; \
 	mkdir -p "$(LEDE_DIR)/files/etc/erouter"; \
 	printf '%s\n' "$$ver" > "$(LEDE_DIR)/files/etc/erouter/VERSION"; \
 	echo "==> Release $$ver → files/etc/erouter/VERSION"
 
 
-# 调试段 +1；满 20 则小版本 +1、调试归零（大.小.调试）
+# 调试段 +1；满 100 则小版本 +1、调试归零（大.小.调试）
 bump-version:
 	@test -f "$(VERSION_FILE)" || { echo "错误: 缺少 $(VERSION_FILE)"; exit 1; }
 	@ver=$$(tr -d ' \t\r\n' < "$(VERSION_FILE)"); \
@@ -238,7 +238,7 @@ bump-version:
 	min=$$(echo "$$ver" | cut -d. -f2); \
 	dbg=$$(echo "$$ver" | cut -d. -f3); \
 	dbg=$$((dbg + 1)); \
-	if [ "$$dbg" -gt 20 ]; then min=$$((min + 1)); dbg=0; fi; \
+	if [ "$$dbg" -gt 99 ]; then min=$$((min + 1)); dbg=0; fi; \
 	printf '%s.%s.%s\n' "$$maj" "$$min" "$$dbg" > "$(VERSION_FILE)"; \
 	echo "==> 版本 $$ver → $$(tr -d ' \t\r\n' < "$(VERSION_FILE)")"
 
@@ -284,7 +284,7 @@ upload:
 	echo "$$ver" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$$' || { \
 		echo "错误: Release 须为 大.小.调试，当前: $$ver"; exit 1; }; \
 	dbg=$$(echo "$$ver" | cut -d. -f3); \
-	[ "$$dbg" -le 20 ] || { echo "错误: 调试段须≤20，当前: $$ver"; exit 1; }; \
+	[ "$$dbg" -le 99 ] || { echo "错误: 调试段须≤99，当前: $$ver"; exit 1; }; \
 	if [ -n "$(FW)" ]; then \
 		bin="$(FW)"; \
 	else \
