@@ -40,6 +40,8 @@ VERSION_FILE ?= $(MK_DIR)/VERSION
 VERSION      ?= $(shell tr -d ' \t\r\n' < "$(VERSION_FILE)" 2>/dev/null)
 # NOTES 默认在 upload 配方内由 lede/web/edev 最新 commit 生成；可 NOTES=... 覆盖
 NOTES        ?=
+# 与 mw erouter.upload_token 开发约定一致；.upload_token 或命令行可覆盖
+UPLOAD_TOKEN ?= erouter
 UPLOAD_URL   ?= http://8.138.182.21:8081/erouter/firmware/
 BOARD        ?= cudy-tr3000
 CHANNEL      ?= stable
@@ -113,7 +115,7 @@ help:
 	@echo "说明: make firmware = build + 注入 Release + 强制重编 erouter-web/edev 包 + 出固件"
 	@echo "Release: VERSION=$(VERSION)（文件 $(VERSION_FILE)；大.小.调试，调试≤20）"
 	@echo "上传: make upload  →  POST $(UPLOAD_URL)；notes 默认=lede/web/edev 最新 commit"
-	@echo "      令牌: UPLOAD_TOKEN=... 或 $(MK_DIR)/.upload_token（勿提交）"
+	@echo "      令牌: 默认 UPLOAD_TOKEN=$(UPLOAD_TOKEN)；可 .upload_token 或命令行覆盖"
 	@echo "      变量: BOARD=$(BOARD) CHANNEL=$(CHANNEL) VERSION=$(VERSION) FW=路径 NOTES=覆盖"
 	@echo "下载镜像预置:"
 	@echo "      make download / make download 1 / tuna   # $(MIRROR_1)"
@@ -225,11 +227,11 @@ firmware: ensure-container build rebuild-erouter
 # 不依赖 docker：直接 curl 上传本地 sysupgrade（产物在挂载上）
 upload:
 	@token="$(UPLOAD_TOKEN)"; \
-	if [ -z "$$token" ] && [ -f "$(MK_DIR)/.upload_token" ]; then \
+	if [ "$(origin UPLOAD_TOKEN)" != "command line" ] && [ -f "$(MK_DIR)/.upload_token" ]; then \
 		token=$$(tr -d '\r\n' < "$(MK_DIR)/.upload_token"); \
 	fi; \
 	if [ -z "$$token" ]; then \
-		echo "错误: 设置 UPLOAD_TOKEN 或写入 $(MK_DIR)/.upload_token"; exit 1; \
+		echo "错误: 上传令牌为空"; exit 1; \
 	fi; \
 	ver="$(VERSION)"; \
 	if [ -z "$$ver" ]; then \
