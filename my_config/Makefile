@@ -48,6 +48,9 @@ CHANNEL      ?= stable
 FW_PATTERN   ?= $(LEDE_DIR)/bin/targets/mediatek/filogic/*tr3000*sysupgrade.bin
 FW           ?=
 
+# npm 镜像（make build 拉前端依赖）
+NPM_REGISTRY ?= https://mirrors.cloud.tencent.com/npm/
+
 # 预置 openwrt/sources 镜像（make download 1|2|3 或 tuna|ustc|nju）
 MIRROR_1   ?= https://mirrors.tuna.tsinghua.edu.cn/openwrt/sources
 MIRROR_2   ?= https://mirrors.ustc.edu.cn/openwrt/sources
@@ -142,15 +145,29 @@ update: update-web update-edev update-lede
 update-web:
 	@echo "==> 更新前端源码 → $(WEB_DIR) (branch=$(WEB_BRANCH))"
 	@mkdir -p $(LEDE_DIR)/dl
-	@rm -rf $(WEB_DIR)
-	@$(GIT_SAFE) clone -b $(WEB_BRANCH) --single-branch --depth 1 $(WEB_REPO) $(WEB_DIR)
+	@if [ -d "$(WEB_DIR)/.git" ]; then \
+		$(GIT_SAFE) -C $(WEB_DIR) remote set-url origin $(WEB_REPO); \
+		$(GIT_SAFE) -C $(WEB_DIR) fetch --depth 1 --prune origin $(WEB_BRANCH); \
+		$(GIT_SAFE) -C $(WEB_DIR) checkout -B $(WEB_BRANCH) FETCH_HEAD; \
+		$(GIT_SAFE) -C $(WEB_DIR) reset --hard FETCH_HEAD; \
+		$(GIT_SAFE) -C $(WEB_DIR) clean -fd -e node_modules -e node_modules/**; \
+	else \
+		$(GIT_SAFE) clone -b $(WEB_BRANCH) --single-branch --depth 1 $(WEB_REPO) $(WEB_DIR); \
+	fi
 	@echo "etmu-web: $$($(GIT_SAFE) -C $(WEB_DIR) rev-parse --short HEAD)"
 
 update-edev:
 	@echo "==> 更新设备代理源码 → $(EDEV_DIR) (branch=$(EDEV_BRANCH))"
 	@mkdir -p $(LEDE_DIR)/dl
-	@rm -rf $(EDEV_DIR)
-	@$(GIT_SAFE) clone -b $(EDEV_BRANCH) --single-branch --depth 1 $(EDEV_REPO) $(EDEV_DIR)
+	@if [ -d "$(EDEV_DIR)/.git" ]; then \
+		$(GIT_SAFE) -C $(EDEV_DIR) remote set-url origin $(EDEV_REPO); \
+		$(GIT_SAFE) -C $(EDEV_DIR) fetch --depth 1 --prune origin $(EDEV_BRANCH); \
+		$(GIT_SAFE) -C $(EDEV_DIR) checkout -B $(EDEV_BRANCH) FETCH_HEAD; \
+		$(GIT_SAFE) -C $(EDEV_DIR) reset --hard FETCH_HEAD; \
+		$(GIT_SAFE) -C $(EDEV_DIR) clean -fd; \
+	else \
+		$(GIT_SAFE) clone -b $(EDEV_BRANCH) --single-branch --depth 1 $(EDEV_REPO) $(EDEV_DIR); \
+	fi
 	@test -f $(EDEV_DIR)/files/usr/sbin/erouterd || { echo "错误: 缺少 erouterd"; exit 1; }
 	@echo "etmu-edev: $$($(GIT_SAFE) -C $(EDEV_DIR) rev-parse --short HEAD)"
 
@@ -179,7 +196,15 @@ build: ensure-container
 	$(DOCKER_ETMU) bash -lc 'set -euo pipefail; \
 		cd /home/etmu/lede/dl/etmu-web; \
 		npm config set allow-remote all >/dev/null 2>&1 || true; \
-		npm install; \
+		pkg_hash=$$(sha256sum package.json | awk "{print \$$1}"); \
+		if [ ! -d node_modules/vite ] || [ ! -f node_modules/.erouter-pkg-hash ] \
+			|| [ "$$(cat node_modules/.erouter-pkg-hash)" != "$$pkg_hash" ]; then \
+			echo "==> npm install（package.json 变更或缺依赖）"; \
+			npm install --registry=$(NPM_REGISTRY) --no-audit --no-fund --prefer-offline; \
+			printf "%s\n" "$$pkg_hash" > node_modules/.erouter-pkg-hash; \
+		else \
+			echo "==> 跳过 npm install（node_modules 与 package.json 一致）"; \
+		fi; \
 		npm run build-only -- --outDir /home/etmu/lede/bin/etmu-web --emptyOutDir'
 	@test -f $(DIST_DIR)/index.html || { echo "错误: 构建未生成 index.html"; exit 1; }
 	@! grep -q 'You did it' $(DIST_DIR)/assets/*.js 2>/dev/null || { \
