@@ -16,6 +16,8 @@
 #   make download socks        # 额外走 SOCKS（官方源兜底）
 #   make download MIRROR=URL
 #   make JOBS=4 BRANCH=tr3000 WEB_BRANCH=web_tr3000 EDEV_BRANCH=edev
+#   make upload                 # 上传最新 sysupgrade 到 mw（VERSION 读 my_config/VERSION）
+#   make upload CHANNEL=stable UPLOAD_TOKEN=...
 
 MK_DIR    := $(abspath $(dir $(lastword $(MAKEFILE_LIST))))
 LEDE_DIR  := $(abspath $(MK_DIR)/..)
@@ -32,6 +34,17 @@ EDEV_BRANCH?= edev
 WEB_REPO   ?= https://etmu:EnchantedTMU123@gitee.com/etmu/erouter
 EDEV_REPO  ?= $(WEB_REPO)
 JOBS       ?= $(shell nproc 2>/dev/null || echo 4)
+
+# Release 版本（大.小.调试）；前端/后端/插件各自另有版本，互不自动同步
+VERSION_FILE ?= $(MK_DIR)/VERSION
+VERSION      ?= $(shell tr -d ' \t\r\n' < "$(VERSION_FILE)" 2>/dev/null)
+# NOTES 默认在 upload 配方内由 lede/web/edev 最新 commit 生成；可 NOTES=... 覆盖
+NOTES        ?=
+UPLOAD_URL   ?= http://8.138.182.21:8081/erouter/firmware/
+BOARD        ?= cudy-tr3000
+CHANNEL      ?= stable
+FW_PATTERN   ?= $(LEDE_DIR)/bin/targets/mediatek/filogic/*tr3000*sysupgrade.bin
+FW           ?=
 
 # 预置 openwrt/sources 镜像（make download 1|2|3 或 tuna|ustc|nju）
 MIRROR_1   ?= https://mirrors.tuna.tsinghua.edu.cn/openwrt/sources
@@ -86,7 +99,7 @@ endif
 GIT_SAFE = git -c safe.directory='*'
 
 .PHONY: all help update update-web update-edev update-lede config build rebuild-erouter download \
-	1 2 3 tuna ustc nju socks proxy firmware make ensure-container
+	1 2 3 tuna ustc nju socks proxy firmware upload inject-version make ensure-container
 
 all: update build config download firmware
 
@@ -96,8 +109,12 @@ all: update build config download firmware
 
 help:
 	@echo "目录: $(MK_DIR)"
-	@echo "目标: all | update | update-web | update-edev | update-lede | config | build | rebuild-erouter | download | firmware"
-	@echo "说明: make firmware = build + 强制重编 erouter-web/edev 包 + 出固件（避免 OpenWrt 缓存旧 ipk）"
+	@echo "目标: all | update | update-web | update-edev | update-lede | config | build | rebuild-erouter | download | firmware | upload"
+	@echo "说明: make firmware = build + 注入 Release + 强制重编 erouter-web/edev 包 + 出固件"
+	@echo "Release: VERSION=$(VERSION)（文件 $(VERSION_FILE)；大.小.调试，调试≤20）"
+	@echo "上传: make upload  →  POST $(UPLOAD_URL)；notes 默认=lede/web/edev 最新 commit"
+	@echo "      令牌: UPLOAD_TOKEN=... 或 $(MK_DIR)/.upload_token（勿提交）"
+	@echo "      变量: BOARD=$(BOARD) CHANNEL=$(CHANNEL) VERSION=$(VERSION) FW=路径 NOTES=覆盖"
 	@echo "下载镜像预置:"
 	@echo "      make download / make download 1 / tuna   # $(MIRROR_1)"
 	@echo "      make download 2 / ustc                   # $(MIRROR_2)"
@@ -167,7 +184,19 @@ build: ensure-container
 		echo "错误: 产物仍是 Vite 欢迎页，检查 $(WEB_DIR) 是否已 update-web"; exit 1; }
 
 # OpenWrt 不感知 dl/etmu-* 的 git 变更；必须 clean 后才会重跑 package Compile/install
-rebuild-erouter: ensure-container
+# 注入 Release 到 rootfs overlay + 包安装路径共用 my_config/VERSION
+inject-version:
+	@test -f "$(VERSION_FILE)" || { echo "错误: 缺少 $(VERSION_FILE)"; exit 1; }
+	@ver=$$(tr -d ' \t\r\n' < "$(VERSION_FILE)"); \
+	echo "$$ver" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$$' || { \
+		echo "错误: Release 须为 大.小.调试，当前: $$ver"; exit 1; }; \
+	dbg=$$(echo "$$ver" | cut -d. -f3); \
+	[ "$$dbg" -le 20 ] || { echo "错误: 调试段须≤20，当前: $$ver"; exit 1; }; \
+	mkdir -p "$(LEDE_DIR)/files/etc/erouter"; \
+	printf '%s\n' "$$ver" > "$(LEDE_DIR)/files/etc/erouter/VERSION"; \
+	echo "==> Release $$ver → files/etc/erouter/VERSION"
+
+rebuild-erouter: ensure-container inject-version
 	@echo "==> 强制重编 erouter-web / erouter-edev（避免用缓存旧 ipk）"
 	@test -f $(WEB_DIR)/package.json || { echo "错误: 缺少 etmu-web，先 make update-web"; exit 1; }
 	@test -f $(EDEV_DIR)/files/usr/sbin/erouterd || { echo "错误: 缺少 etmu-edev，先 make update-edev"; exit 1; }
@@ -192,5 +221,64 @@ download: ensure-container
 firmware: ensure-container build rebuild-erouter
 	@echo "==> make V=s -j$(JOBS)（含已强制重编的 erouter-web / erouter-edev）"
 	$(DOCKER_ETMU) bash -lc 'set -euo pipefail; cd /home/etmu/lede; make V=s -j$(JOBS)'
+
+# 不依赖 docker：直接 curl 上传本地 sysupgrade（产物在挂载上）
+upload:
+	@token="$(UPLOAD_TOKEN)"; \
+	if [ -z "$$token" ] && [ -f "$(MK_DIR)/.upload_token" ]; then \
+		token=$$(tr -d '\r\n' < "$(MK_DIR)/.upload_token"); \
+	fi; \
+	if [ -z "$$token" ]; then \
+		echo "错误: 设置 UPLOAD_TOKEN 或写入 $(MK_DIR)/.upload_token"; exit 1; \
+	fi; \
+	ver="$(VERSION)"; \
+	if [ -z "$$ver" ]; then \
+		echo "错误: 缺少 Release 版本（$(VERSION_FILE) 或 VERSION=）"; exit 1; \
+	fi; \
+	echo "$$ver" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$$' || { \
+		echo "错误: Release 须为 大.小.调试，当前: $$ver"; exit 1; }; \
+	dbg=$$(echo "$$ver" | cut -d. -f3); \
+	[ "$$dbg" -le 20 ] || { echo "错误: 调试段须≤20，当前: $$ver"; exit 1; }; \
+	if [ -n "$(FW)" ]; then \
+		bin="$(FW)"; \
+	else \
+		bin=$$(ls -1t $(FW_PATTERN) 2>/dev/null | head -1 || true); \
+	fi; \
+	if [ -z "$$bin" ] || [ ! -f "$$bin" ]; then \
+		echo "错误: 无固件，先 make firmware（或 FW=/path/to.bin）"; exit 1; \
+	fi; \
+	notes="$(NOTES)"; \
+	if [ -z "$$notes" ]; then \
+		parts=""; \
+		for pair in "lede:$(LEDE_DIR)" "web:$(WEB_DIR)" "edev:$(EDEV_DIR)"; do \
+			name=$${pair%%:*}; dir=$${pair#*:}; \
+			c=$$($(GIT_SAFE) -C "$$dir" log -1 --format='%h %s' 2>/dev/null || true); \
+			[ -n "$$c" ] || continue; \
+			if [ -n "$$parts" ]; then parts="$$parts | "; fi; \
+			parts="$$parts$$name: $$c"; \
+		done; \
+		notes="$$parts"; \
+	fi; \
+	sha=$$(sha256sum "$$bin" | awk '{print $$1}'); \
+	echo "==> 上传 $$bin"; \
+	echo "    → $(UPLOAD_URL)"; \
+	echo "    board=$(BOARD) channel=$(CHANNEL) version=$$ver"; \
+	echo "    sha256=$$sha"; \
+	echo "    notes=$$notes"; \
+	resp=$$(curl -sS -w '\n%{http_code}' -X POST "$(UPLOAD_URL)" \
+		-H "Authorization: Bearer $$token" \
+		-F "file=@$$bin" \
+		-F "board=$(BOARD)" \
+		-F "channel=$(CHANNEL)" \
+		-F "version=$$ver" \
+		-F "sha256=$$sha" \
+		-F "notes=$$notes"); \
+	code=$$(printf '%s\n' "$$resp" | tail -n1); \
+	body=$$(printf '%s\n' "$$resp" | sed '$$d'); \
+	printf '%s\n' "$$body"; \
+	case "$$code" in \
+		201) echo "成功 HTTP $$code";; \
+		*) echo "失败 HTTP $$code"; exit 1;; \
+	esac
 
 make: firmware

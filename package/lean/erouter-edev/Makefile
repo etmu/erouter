@@ -48,6 +48,7 @@ endef
 
 define Package/erouter-edev/install
 	$(INSTALL_DIR) $(1)/etc/config
+	$(INSTALL_DIR) $(1)/etc/erouter
 	$(INSTALL_DIR) $(1)/etc/init.d
 	$(INSTALL_DIR) $(1)/usr/sbin
 	$(INSTALL_DIR) $(1)/usr/lib/erouter
@@ -57,6 +58,12 @@ define Package/erouter-edev/install
 	$(INSTALL_BIN) $(EDEV_SRC_DIR)/files/usr/sbin/erouterd $(1)/usr/sbin/erouterd
 	$(INSTALL_DATA) $(EDEV_SRC_DIR)/files/usr/lib/erouter/common.sh $(1)/usr/lib/erouter/common.sh
 	$(INSTALL_BIN) $(EDEV_SRC_DIR)/files/www/cgi-bin/erouter-status $(1)/www/cgi-bin/erouter-status
+	# Release：与平台固件制品版本一致（my_config/VERSION）；缺省则不装，由 overlay 或 DISTRIB 兜底
+	if [ -f "$(TOPDIR)/my_config/VERSION" ]; then \
+		$(INSTALL_DATA) $(TOPDIR)/my_config/VERSION $(1)/etc/erouter/VERSION; \
+	elif [ -f "$(TOPDIR)/files/etc/erouter/VERSION" ]; then \
+		$(INSTALL_DATA) $(TOPDIR)/files/etc/erouter/VERSION $(1)/etc/erouter/VERSION; \
+	fi
 endef
 
 $(eval $(call BuildPackage,erouter-edev))
