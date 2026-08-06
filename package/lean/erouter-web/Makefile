@@ -6,7 +6,7 @@ include $(TOPDIR)/rules.mk
 
 PKG_NAME:=erouter-web
 PKG_VERSION:=1.0.0
-PKG_RELEASE:=3
+PKG_RELEASE:=4
 
 include $(INCLUDE_DIR)/package.mk
 
@@ -54,11 +54,15 @@ define Package/erouter-web/install
 	$(INSTALL_DIR) $(1)/www/assets
 	$(INSTALL_DIR) $(1)/www/erouter
 	$(INSTALL_DIR) $(1)/etc/uci-defaults
-	# 不把 index.html 写进 ipk 的 /www/（会与 luci-base 冲突）；由 postinst 覆盖
+	$(INSTALL_DIR) $(1)/etc/init.d
+	# 不把 index.html 写进 ipk 的 /www/（会与 luci-base 冲突）；由 postinst / init 覆盖
 	$(CP) $(WEB_DIST_DIR)/index.html $(1)/www/erouter/index.html
 	$(CP) $(WEB_DIST_DIR)/assets/* $(1)/www/assets/
 	[ -f "$(WEB_DIST_DIR)/favicon.ico" ] && $(CP) $(WEB_DIST_DIR)/favicon.ico $(1)/www/erouter/favicon.ico || true
 	$(INSTALL_BIN) ./files/99-erouter-web $(1)/etc/uci-defaults/99-erouter-web
+	$(INSTALL_BIN) ./files/erouter-web.init $(1)/etc/init.d/erouter-web
+	$(INSTALL_DIR) $(1)/etc/rc.d
+	ln -sf ../init.d/erouter-web $(1)/etc/rc.d/S99erouter-web
 endef
 
 # 出镜像（IPKG_INSTROOT 有值）与真机升级都会执行，保证 /www/index.html 用最新前端
@@ -70,6 +74,11 @@ if [ -f "$${ROOT}/www/erouter/index.html" ]; then
 fi
 if [ -f "$${ROOT}/www/erouter/favicon.ico" ]; then
 	cp -f "$${ROOT}/www/erouter/favicon.ico" "$${ROOT}/www/favicon.ico"
+fi
+# 真机安装时启用开机同步（镜像构建阶段跳过）
+if [ -z "$${IPKG_INSTROOT}" ] && [ -x /etc/init.d/erouter-web ]; then
+	/etc/init.d/erouter-web enable >/dev/null 2>&1 || true
+	/etc/init.d/erouter-web start >/dev/null 2>&1 || true
 fi
 exit 0
 endef

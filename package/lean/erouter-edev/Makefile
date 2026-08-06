@@ -5,7 +5,7 @@
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=erouter-edev
-PKG_VERSION:=0.0.1
+PKG_VERSION:=0.0.14
 PKG_RELEASE:=1
 
 include $(INCLUDE_DIR)/package.mk
