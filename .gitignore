@@ -30,3 +30,8 @@ git-src
 .cproject
 .ccache
 .vscode*
+
+# local temp / sysupgrade artifacts
+my_config/VERSION.tmp*
+/tmp-sysup-root.sqfs
+/*.sqfs
