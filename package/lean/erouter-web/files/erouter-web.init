@@ -1,0 +1,14 @@
+#!/bin/sh /etc/rc.common
+# 每次启动把最新 SPA 首页同步到 /www/index.html，避免 overlay 残留旧页挡住升级。
+
+START=99
+
+boot() {
+	[ -f /www/erouter/index.html ] && cp -f /www/erouter/index.html /www/index.html
+	[ -f /www/erouter/favicon.ico ] && cp -f /www/erouter/favicon.ico /www/favicon.ico
+	return 0
+}
+
+start() {
+	boot
+}

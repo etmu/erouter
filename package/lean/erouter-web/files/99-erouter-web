@@ -1,5 +1,5 @@
 #!/bin/sh
-# 首次启动兜底（postinst 出镜像时一般已覆盖 /www/index.html）
+# 首次启动兜底；日常升级后靠 /etc/init.d/erouter-web 防止 overlay 旧首页残留
 
 [ -f /www/erouter/index.html ] && cp -f /www/erouter/index.html /www/index.html
 [ -f /www/erouter/favicon.ico ] && cp -f /www/erouter/favicon.ico /www/favicon.ico
