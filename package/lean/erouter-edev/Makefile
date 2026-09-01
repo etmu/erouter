@@ -5,7 +5,7 @@
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=erouter-edev
-PKG_VERSION:=0.0.14
+PKG_VERSION:=0.0.19
 PKG_RELEASE:=1
 
 include $(INCLUDE_DIR)/package.mk
@@ -17,14 +17,14 @@ EDEV_BRANCH?=edev
 define Package/erouter-edev
   SECTION:=net
   CATEGORY:=Network
-  TITLE:=eRouter device agent (MQTT OTA)
+  TITLE:=eRouter device agent (HTTP OTA)
   PKGARCH:=all
-  DEPENDS:=+mosquitto-client-ssl +jshn +uhttpd +rpcd +uhttpd-mod-ubus
+  DEPENDS:=+jshn +uhttpd +rpcd +uhttpd-mod-ubus +openssl-util
 endef
 
 define Package/erouter-edev/description
   Pulls agent scripts from erouter.git ($(EDEV_BRANCH)) at build time.
-  MQTT upgrade agent + /cgi-bin/erouter-status for local Vue UI.
+  HTTP OTA agent + /cgi-bin/erouter-status + erouter-upgrade-action for local Vue UI.
 endef
 
 define Package/erouter-edev/conffiles
@@ -58,6 +58,7 @@ define Package/erouter-edev/install
 	$(INSTALL_BIN) $(EDEV_SRC_DIR)/files/usr/sbin/erouterd $(1)/usr/sbin/erouterd
 	$(INSTALL_DATA) $(EDEV_SRC_DIR)/files/usr/lib/erouter/common.sh $(1)/usr/lib/erouter/common.sh
 	$(INSTALL_BIN) $(EDEV_SRC_DIR)/files/www/cgi-bin/erouter-status $(1)/www/cgi-bin/erouter-status
+	$(INSTALL_BIN) $(EDEV_SRC_DIR)/files/www/cgi-bin/erouter-upgrade-action $(1)/www/cgi-bin/erouter-upgrade-action
 	# Release：与平台固件制品版本一致（my_config/VERSION）；缺省则不装，由 overlay 或 DISTRIB 兜底
 	if [ -f "$(TOPDIR)/my_config/VERSION" ]; then \
 		$(INSTALL_DATA) $(TOPDIR)/my_config/VERSION $(1)/etc/erouter/VERSION; \
