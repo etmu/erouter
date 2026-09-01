@@ -5,7 +5,7 @@
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=erouter-edev
-PKG_VERSION:=0.0.19
+PKG_VERSION:=0.0.20
 PKG_RELEASE:=1
 
 include $(INCLUDE_DIR)/package.mk
@@ -59,12 +59,7 @@ define Package/erouter-edev/install
 	$(INSTALL_DATA) $(EDEV_SRC_DIR)/files/usr/lib/erouter/common.sh $(1)/usr/lib/erouter/common.sh
 	$(INSTALL_BIN) $(EDEV_SRC_DIR)/files/www/cgi-bin/erouter-status $(1)/www/cgi-bin/erouter-status
 	$(INSTALL_BIN) $(EDEV_SRC_DIR)/files/www/cgi-bin/erouter-upgrade-action $(1)/www/cgi-bin/erouter-upgrade-action
-	# Release：与平台固件制品版本一致（my_config/VERSION）；缺省则不装，由 overlay 或 DISTRIB 兜底
-	if [ -f "$(TOPDIR)/my_config/VERSION" ]; then \
-		$(INSTALL_DATA) $(TOPDIR)/my_config/VERSION $(1)/etc/erouter/VERSION; \
-	elif [ -f "$(TOPDIR)/files/etc/erouter/VERSION" ]; then \
-		$(INSTALL_DATA) $(TOPDIR)/files/etc/erouter/VERSION $(1)/etc/erouter/VERSION; \
-	fi
+	# 固件组成见 LEDE files/etc/swver（编译时由 my_config inject-swver 生成）
 endef
 
 $(eval $(call BuildPackage,erouter-edev))

@@ -16,7 +16,7 @@
 #   make download socks        # 额外走 SOCKS（官方源兜底）
 #   make download MIRROR=URL
 #   make JOBS=4 BRANCH=tr3000 WEB_BRANCH=web_tr3000 EDEV_BRANCH=edev
-#   make upload                 # 上传最新 sysupgrade 到 mw（VERSION 读 my_config/VERSION）
+#   make upload                 # 上传最新 sysupgrade（version 取 /etc/swver 的 meta.id）
 #   make upload CHANNEL=stable UPLOAD_TOKEN=...
 
 MK_DIR    := $(abspath $(dir $(lastword $(MAKEFILE_LIST))))
@@ -26,6 +26,7 @@ ETMU_DIR  := $(abspath $(MK_DIR)/../..)
 WEB_DIR   := $(LEDE_DIR)/dl/etmu-web
 EDEV_DIR  := $(LEDE_DIR)/dl/etmu-edev
 DIST_DIR  := $(LEDE_DIR)/bin/etmu-web
+SWVER_OUT ?= $(LEDE_DIR)/files/etc/swver
 
 CONTAINER  ?= ubuntu_tr3000
 BRANCH     ?= tr3000
@@ -35,15 +36,9 @@ WEB_REPO   ?= https://etmu:EnchantedTMU123@gitee.com/etmu/erouter
 EDEV_REPO  ?= $(WEB_REPO)
 JOBS       ?= $(shell nproc 2>/dev/null || echo 4)
 
-# Release 版本（大.小.调试，调试段百进制）；前端/后端/插件各自另有版本，互不自动同步
-VERSION_FILE ?= $(MK_DIR)/VERSION
-VERSION      ?= $(shell tr -d ' \t\r\n' < "$(VERSION_FILE)" 2>/dev/null)
-# 调试段上限（百进制：0～DBG_MAX，再 +1 则小版本进位）
-DBG_MAX      ?= 99
-# NOTES 默认在 upload 配方内由 lede/web/edev 最新 commit 生成；可 NOTES=... 覆盖
+# NOTES 默认由 upload 读 swver / 各仓最新 commit；可 NOTES=... 覆盖
 NOTES        ?=
-# 内容变更时默认 +1；BUMP=0 禁止自动递增；FORCE=1 强制递增并重编
-BUMP         ?= 1
+# FORCE=1 强制 clean 重编 erouter 包（与源码指纹无关）
 FORCE        ?= 0
 # 与 mw erouter.upload_token 开发约定一致；.upload_token 或命令行可覆盖
 UPLOAD_TOKEN ?= erouter
@@ -109,7 +104,7 @@ endif
 GIT_SAFE = git -c safe.directory='*'
 
 .PHONY: all help update update-web update-edev update-lede config build rebuild-erouter download \
-	1 2 3 tuna ustc nju socks proxy firmware firmware-bump erouter-prepare upload inject-version bump-version make ensure-container ensure-etmu-writable
+	1 2 3 tuna ustc nju socks proxy firmware erouter-prepare upload inject-swver make ensure-container ensure-etmu-writable
 
 all: update build config download firmware
 
@@ -120,13 +115,12 @@ all: update build config download firmware
 help:
 	@echo "目录: $(MK_DIR)"
 	@echo "目标: all | update | update-web | update-edev | update-lede | config | build | rebuild-erouter | download | firmware | upload"
-	@echo "说明: make firmware = build + 按需递增/重编 erouter + 出固件"
-	@echo "Release: VERSION=$(VERSION)（$(VERSION_FILE)；大.小.调试，百进制调试≤$(DBG_MAX)）"
-	@echo "固件: 对比 web/edev 源码树指纹（含脏工作区）+ erouter 包 Makefile；有变更才 +1 并重编"
-	@echo "      BUMP=0 禁止自动 +1；FORCE=1 强制 +1 并重编；make bump-version 手动 +1"
-	@echo "上传: make upload  →  POST $(UPLOAD_URL)；用当前 VERSION（与已编固件一致）"
+	@echo "说明: make firmware = build + 生成 /etc/swver + 按需重编 erouter + 出固件"
+	@echo "版本: 编译时写入 files/etc/swver（lede/web/edev 提交信息）；无 my_config/VERSION"
+	@echo "固件: 对比 web/edev 源码指纹 + erouter 包 Makefile；有变更或 FORCE=1 则 clean 重编"
+	@echo "上传: make upload  →  POST $(UPLOAD_URL)；version=swver meta.id"
 	@echo "      令牌: 默认 UPLOAD_TOKEN=$(UPLOAD_TOKEN)；可 .upload_token 或命令行覆盖"
-	@echo "      变量: BOARD=$(BOARD) CHANNEL=$(CHANNEL) VERSION=$(VERSION) FW=路径 NOTES=覆盖"
+	@echo "      变量: BOARD=$(BOARD) CHANNEL=$(CHANNEL) FW=路径 NOTES=覆盖"
 	@echo "权限: 写 lede 树一律以容器用户 etmu；make ensure-etmu-writable 自检"
 	@echo "下载镜像预置:"
 	@echo "      make download / make download 1 / tuna   # $(MIRROR_1)"
@@ -153,7 +147,8 @@ endif
 ensure-etmu-writable:
 ifeq ($(IN_DOCKER),1)
 	@set -e; \
-	for d in /home/etmu/lede/my_config /home/etmu/lede/files /home/etmu/lede/files/etc/erouter \
+	for d in /home/etmu/lede/my_config /home/etmu/lede/files /home/etmu/lede/files/etc \
+		/home/etmu/lede/files/etc/erouter \
 		/home/etmu/lede/dl /home/etmu/lede/bin /home/etmu/lede/tmp \
 		/home/etmu/lede/package/lean/erouter-edev /home/etmu/lede/package/lean/erouter-web; do \
 		mkdir -p "$$d"; \
@@ -167,7 +162,8 @@ ifeq ($(IN_DOCKER),1)
 	done
 else
 	@$(DOCKER_ETMU) bash -lc 'set -euo pipefail; \
-		for d in /home/etmu/lede/my_config /home/etmu/lede/files /home/etmu/lede/files/etc/erouter \
+		for d in /home/etmu/lede/my_config /home/etmu/lede/files /home/etmu/lede/files/etc \
+			/home/etmu/lede/files/etc/erouter \
 			/home/etmu/lede/dl /home/etmu/lede/bin /home/etmu/lede/tmp \
 			/home/etmu/lede/package/lean/erouter-edev /home/etmu/lede/package/lean/erouter-web; do \
 			mkdir -p "$$d"; \
@@ -265,48 +261,91 @@ build: ensure-container
 	@! grep -q 'You did it' $(DIST_DIR)/assets/*.js 2>/dev/null || { \
 		echo "错误: 产物仍是 Vite 欢迎页，检查 $(WEB_DIR) 是否已 update-web"; exit 1; }
 
-# OpenWrt 不感知 dl/etmu-* 的 git 变更；内容变更时才 clean 重编并递增 Release
-# 指纹（方案 A）：web/edev 的 HEAD（工作区脏则附加 diff 哈希）+ erouter 包 Makefile；不含 dist
+# OpenWrt 不感知 dl/etmu-* 的 git 变更；内容变更时 clean 重编 erouter 包
+# 指纹：web/edev 的 HEAD（工作区脏则附加 diff 哈希）+ erouter 包 Makefile；不含 dist
 STAMP_FILE   ?= $(MK_DIR)/.erouter-stamp
 EROUTER_STATE?= $(MK_DIR)/.erouter-state
 
-inject-version: ensure-container
+# 编译时生成 files/etc/swver（设备路径 /etc/swver）
+inject-swver: ensure-container
 	@$(DOCKER_ETMU) bash -lc 'set -euo pipefail; \
-		VERSION_FILE=/home/etmu/lede/my_config/VERSION; \
-		OUT=/home/etmu/lede/files/etc/erouter/VERSION; \
-		DBG_MAX=$(DBG_MAX); \
-		test -f "$$VERSION_FILE" || { echo "错误: 缺少 $$VERSION_FILE"; exit 1; }; \
-		ver=$$(tr -d " \t\r\n" < "$$VERSION_FILE"); \
-		echo "$$ver" | grep -Eq "^[0-9]+\.[0-9]+\.[0-9]+$$" || { \
-			echo "错误: Release 须为 大.小.调试，当前: $$ver"; exit 1; }; \
-		dbg=$$(echo "$$ver" | cut -d. -f3); \
-		[ "$$dbg" -le "$$DBG_MAX" ] || { echo "错误: 调试段须≤$$DBG_MAX，当前: $$ver"; exit 1; }; \
+		LEDE_DIR=/home/etmu/lede; \
+		WEB_DIR=/home/etmu/lede/dl/etmu-web; \
+		EDEV_DIR=/home/etmu/lede/dl/etmu-edev; \
+		OUT=/home/etmu/lede/files/etc/swver; \
+		BOARD="$(BOARD)"; CHANNEL="$(CHANNEL)"; BUILDER="$(CONTAINER)"; \
+		GIT="git -c safe.directory=*"; \
+		test -f "$$WEB_DIR/package.json" || { echo "错误: 缺少 etmu-web，先 make update-web"; exit 1; }; \
+		test -f "$$EDEV_DIR/files/usr/sbin/erouterd" || { echo "错误: 缺少 etmu-edev，先 make update-edev"; exit 1; }; \
+		lede_branch=$$($$GIT -C "$$LEDE_DIR" rev-parse --abbrev-ref HEAD 2>/dev/null || echo unknown); \
+		lede_commit=$$($$GIT -C "$$LEDE_DIR" rev-parse --short HEAD); \
+		lede_subject=$$($$GIT -C "$$LEDE_DIR" log -1 --format=%s | tr -d "\r\n" | sed "s/[=#]//g"); \
+		lede_committed_at=$$($$GIT -C "$$LEDE_DIR" log -1 --format=%ci); \
+		lede_dirty=0; \
+		[ -n "$$($$GIT -C "$$LEDE_DIR" status --porcelain 2>/dev/null | grep -v node_modules || true)" ] && lede_dirty=1; \
+		web_branch=$$($$GIT -C "$$WEB_DIR" rev-parse --abbrev-ref HEAD 2>/dev/null || echo unknown); \
+		web_commit=$$($$GIT -C "$$WEB_DIR" rev-parse --short HEAD); \
+		web_subject=$$($$GIT -C "$$WEB_DIR" log -1 --format=%s | tr -d "\r\n" | sed "s/[=#]//g"); \
+		web_committed_at=$$($$GIT -C "$$WEB_DIR" log -1 --format=%ci); \
+		web_dirty=0; \
+		[ -n "$$($$GIT -C "$$WEB_DIR" status --porcelain 2>/dev/null | grep -v node_modules || true)" ] && web_dirty=1; \
+		edev_branch=$$($$GIT -C "$$EDEV_DIR" rev-parse --abbrev-ref HEAD 2>/dev/null || echo unknown); \
+		edev_commit=$$($$GIT -C "$$EDEV_DIR" rev-parse --short HEAD); \
+		edev_subject=$$($$GIT -C "$$EDEV_DIR" log -1 --format=%s | tr -d "\r\n" | sed "s/[=#]//g"); \
+		edev_committed_at=$$($$GIT -C "$$EDEV_DIR" log -1 --format=%ci); \
+		edev_dirty=0; \
+		[ -n "$$($$GIT -C "$$EDEV_DIR" status --porcelain 2>/dev/null | grep -v node_modules || true)" ] && edev_dirty=1; \
+		edev_pkg=$$(sed -n "s/^PKG_VERSION:=//p" "$$LEDE_DIR/package/lean/erouter-edev/Makefile" 2>/dev/null | head -1); \
+		edev_rel=$$(sed -n "s/^PKG_RELEASE:=//p" "$$LEDE_DIR/package/lean/erouter-edev/Makefile" 2>/dev/null | head -1); \
+		web_pkg=$$(sed -n "s/^PKG_VERSION:=//p" "$$LEDE_DIR/package/lean/erouter-web/Makefile" 2>/dev/null | head -1); \
+		web_rel=$$(sed -n "s/^PKG_RELEASE:=//p" "$$LEDE_DIR/package/lean/erouter-web/Makefile" 2>/dev/null | head -1); \
+		rtty_pkg=$$(sed -n "s/^PKG_VERSION:=//p" "$$LEDE_DIR/feeds/packages/utils/rtty/Makefile" 2>/dev/null | head -1); \
+		rtty_rel=$$(sed -n "s/^PKG_RELEASE:=//p" "$$LEDE_DIR/feeds/packages/utils/rtty/Makefile" 2>/dev/null | head -1); \
+		id="$$lede_commit-$$web_commit-$$edev_commit"; \
+		built_at=$$(TZ=Asia/Shanghai date "+%Y-%m-%d %H:%M:%S %z"); \
 		mkdir -p "$$(dirname "$$OUT")"; \
-		printf "%s\n" "$$ver" > "$$OUT" || { \
-			echo "错误: 无法写入 $$OUT"; exit 1; }; \
-		got=$$(tr -d " \t\r\n" < "$$OUT"); \
-		[ "$$got" = "$$ver" ] || { echo "错误: 注入后读回 $$got ≠ $$ver"; exit 1; }; \
-		echo "==> Release $$ver → files/etc/erouter/VERSION"'
+		{ \
+			echo "# /etc/swver — 固件组成快照（编译时生成）"; \
+			echo "# 时间：Asia/Shanghai"; \
+			echo; \
+			echo "[meta]"; \
+			echo "board=$$BOARD"; \
+			echo "channel=$$CHANNEL"; \
+			echo "built_at=$$built_at"; \
+			echo "builder=$$BUILDER"; \
+			echo "id=$$id"; \
+			echo; \
+			echo "[lede]"; \
+			echo "branch=$$lede_branch"; \
+			echo "commit=$$lede_commit"; \
+			echo "subject=$$lede_subject"; \
+			echo "committed_at=$$lede_committed_at"; \
+			echo "dirty=$$lede_dirty"; \
+			echo; \
+			echo "[web]"; \
+			echo "branch=$$web_branch"; \
+			echo "commit=$$web_commit"; \
+			echo "subject=$$web_subject"; \
+			echo "committed_at=$$web_committed_at"; \
+			echo "dirty=$$web_dirty"; \
+			echo; \
+			echo "[edev]"; \
+			echo "branch=$$edev_branch"; \
+			echo "commit=$$edev_commit"; \
+			echo "subject=$$edev_subject"; \
+			echo "committed_at=$$edev_committed_at"; \
+			[ -n "$$edev_pkg" ] && echo "pkg_version=$$edev_pkg"; \
+			echo "dirty=$$edev_dirty"; \
+			echo; \
+			echo "[packages]"; \
+			[ -n "$$rtty_pkg" ] && echo "rtty-openssl=$$rtty_pkg-$${rtty_rel:-1}"; \
+			[ -n "$$edev_pkg" ] && echo "erouter-edev=$$edev_pkg-$${edev_rel:-1}"; \
+			[ -n "$$web_pkg" ] && echo "erouter-web=$$web_pkg-$${web_rel:-1}"; \
+		} > "$$OUT"; \
+		rm -f "$$LEDE_DIR/files/etc/erouter/VERSION"; \
+		echo "==> swver id=$$id → $$OUT"'
 
-# 调试段 +1；超过 DBG_MAX 则小版本 +1、调试归零（百进制）
-bump-version: ensure-container
-	@$(DOCKER_ETMU) bash -lc 'set -euo pipefail; \
-		VERSION_FILE=/home/etmu/lede/my_config/VERSION; \
-		DBG_MAX=$(DBG_MAX); \
-		test -f "$$VERSION_FILE" || { echo "错误: 缺少 $$VERSION_FILE"; exit 1; }; \
-		ver=$$(tr -d " \t\r\n" < "$$VERSION_FILE"); \
-		echo "$$ver" | grep -Eq "^[0-9]+\.[0-9]+\.[0-9]+$$" || { \
-			echo "错误: Release 须为 大.小.调试，当前: $$ver"; exit 1; }; \
-		maj=$$(echo "$$ver" | cut -d. -f1); \
-		min=$$(echo "$$ver" | cut -d. -f2); \
-		dbg=$$(echo "$$ver" | cut -d. -f3); \
-		dbg=$$((dbg + 1)); \
-		if [ "$$dbg" -gt "$$DBG_MAX" ]; then min=$$((min + 1)); dbg=0; fi; \
-		printf "%s.%s.%s\n" "$$maj" "$$min" "$$dbg" > "$$VERSION_FILE" || { \
-			echo "错误: 无法写入 $$VERSION_FILE"; exit 1; }; \
-		echo "==> 版本 $$ver → $$(tr -d " \t\r\n" < "$$VERSION_FILE")"'
-
-# 对比源码指纹，决定是否 bump / 强制重编 erouter 包（不依赖 dist）
+# 对比源码指纹，决定是否强制重编 erouter 包（不依赖 dist；不再递增 Release）
 erouter-prepare: ensure-container
 	@$(DOCKER_ETMU) bash -lc 'set -euo pipefail; \
 		WEB_DIR=/home/etmu/lede/dl/etmu-web; \
@@ -314,8 +353,7 @@ erouter-prepare: ensure-container
 		LEDE_DIR=/home/etmu/lede; \
 		STAMP_FILE=/home/etmu/lede/my_config/.erouter-stamp; \
 		EROUTER_STATE=/home/etmu/lede/my_config/.erouter-state; \
-		VERSION_FILE=/home/etmu/lede/my_config/VERSION; \
-		FORCE="$(FORCE)"; BUMP="$(BUMP)"; \
+		FORCE="$(FORCE)"; \
 		test -f "$$WEB_DIR/package.json" || { echo "错误: 缺少 etmu-web，先 make update-web"; exit 1; }; \
 		test -f "$$EDEV_DIR/files/usr/sbin/erouterd" || { echo "错误: 缺少 etmu-edev，先 make update-edev"; exit 1; }; \
 		web_h=$$(git -c safe.directory="*" -C "$$WEB_DIR" rev-parse HEAD 2>/dev/null || echo none); \
@@ -335,35 +373,21 @@ erouter-prepare: ensure-container
 		[ -n "$$pkg" ] || pkg=none; \
 		fp="web=$$web|edev=$$edev|pkg=$$pkg"; \
 		old=$$(cat "$$STAMP_FILE" 2>/dev/null || true); \
-		ver=$$(tr -d " \t\r\n" < "$$VERSION_FILE"); \
-		inj=$$(tr -d " \t\r\n" < "$$LEDE_DIR/files/etc/erouter/VERSION" 2>/dev/null || true); \
-		need_bump=0; need_rebuild=0; \
+		need_rebuild=0; \
 		if [ "$$FORCE" = "1" ]; then \
-			need_bump=1; need_rebuild=1; \
-			echo "==> FORCE=1：递增版本并强制重编 erouter"; \
+			need_rebuild=1; \
+			echo "==> FORCE=1：强制重编 erouter"; \
 		elif [ "$$fp" != "$$old" ]; then \
-			need_bump=1; need_rebuild=1; \
-			echo "==> 源码指纹有变更：将递增 Release 并重编包"; \
+			need_rebuild=1; \
+			echo "==> 源码指纹有变更：将重编 erouter 包"; \
 			echo "    旧: $${old:-<none>}"; \
 			echo "    新: $$fp"; \
-		elif [ "$$ver" != "$$inj" ]; then \
-			need_rebuild=1; \
-			echo "==> VERSION($$ver) 与已注入($${inj:-空})不一致：重编包（不自动 +1）"; \
 		else \
-			echo "==> 源码指纹未变：跳过版本递增与强制重编"; \
+			echo "==> 源码指纹未变：跳过强制重编"; \
 		fi; \
-		if [ "$$BUMP" = "0" ]; then need_bump=0; fi; \
-		printf "FP=%s\nNEED_BUMP=%s\nNEED_REBUILD=%s\n" "$$fp" "$$need_bump" "$$need_rebuild" > "$$EROUTER_STATE"'
+		printf "FP=%s\nNEED_REBUILD=%s\n" "$$fp" "$$need_rebuild" > "$$EROUTER_STATE"'
 
-firmware-bump: erouter-prepare
-	@need=$$(sed -n 's/^NEED_BUMP=//p' "$(EROUTER_STATE)"); \
-	if [ "$$need" = "1" ]; then \
-		$(MAKE) bump-version; \
-	else \
-		echo "==> 保持 Release $$(tr -d ' \t\r\n' < "$(VERSION_FILE)")"; \
-	fi
-
-rebuild-erouter: ensure-container inject-version
+rebuild-erouter: ensure-container inject-swver
 	@need=$$(sed -n 's/^NEED_REBUILD=//p' "$(EROUTER_STATE)" 2>/dev/null || echo 1); \
 	fp=$$(sed -n 's/^FP=//p' "$(EROUTER_STATE)" 2>/dev/null || true); \
 	if [ "$$need" = "1" ]; then \
@@ -380,7 +404,7 @@ rebuild-erouter: ensure-container inject-version
 		$(DOCKER_ETMU) bash -lc 'printf "%s\n" "'"$$fp"'" > /home/etmu/lede/my_config/.erouter-stamp'; \
 	fi
 
-firmware: ensure-container build erouter-prepare firmware-bump rebuild-erouter
+firmware: ensure-container build erouter-prepare rebuild-erouter
 	@echo "==> make V=s -j$(JOBS)"
 	$(DOCKER_ETMU) bash -lc 'set -euo pipefail; cd /home/etmu/lede; make V=s -j$(JOBS)'
 
@@ -407,19 +431,13 @@ upload:
 	if [ -z "$$token" ]; then \
 		echo "错误: 上传令牌为空"; exit 1; \
 	fi; \
-	ver=$$(tr -d ' \t\r\n' < "$(VERSION_FILE)" 2>/dev/null || true); \
-	if [ -z "$$ver" ]; then \
-		echo "错误: 缺少 Release 版本（$(VERSION_FILE) 或 VERSION=）"; exit 1; \
+	swver="$(SWVER_OUT)"; \
+	if [ ! -f "$$swver" ]; then \
+		echo "错误: 缺少 $$swver，先 make inject-swver 或 make firmware"; exit 1; \
 	fi; \
-	echo "$$ver" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$$' || { \
-		echo "错误: Release 须为 大.小.调试，当前: $$ver"; exit 1; }; \
-	dbg=$$(echo "$$ver" | cut -d. -f3); \
-	[ "$$dbg" -le $(DBG_MAX) ] || { echo "错误: 调试段须≤$(DBG_MAX)，当前: $$ver"; exit 1; }; \
-	inj=$$(tr -d ' \t\r\n' < "$(LEDE_DIR)/files/etc/erouter/VERSION" 2>/dev/null || true); \
-	if [ "$$inj" != "$$ver" ]; then \
-		echo "错误: 上传版本 $$ver 与已注入 files/etc/erouter/VERSION($${inj:-空}) 不一致"; \
-		echo "      请先: make inject-version && make firmware"; \
-		exit 1; \
+	ver=$$(awk -F= '/^\[meta\]/{m=1;next} /^\[/{m=0} m&&$$1=="id"{print $$2;exit}' "$$swver" | tr -d ' \t\r\n'); \
+	if [ -z "$$ver" ]; then \
+		echo "错误: $$swver 无 meta.id"; exit 1; \
 	fi; \
 	if [ -n "$(FW)" ]; then \
 		bin="$(FW)"; \
@@ -431,15 +449,9 @@ upload:
 	fi; \
 	notes="$(NOTES)"; \
 	if [ -z "$$notes" ]; then \
-		parts=""; \
-		for pair in "lede:$(LEDE_DIR)" "web:$(WEB_DIR)" "edev:$(EDEV_DIR)"; do \
-			name=$${pair%%:*}; dir=$${pair#*:}; \
-			c=$$($(GIT_SAFE) -C "$$dir" log -1 --format='%h %s' 2>/dev/null || true); \
-			[ -n "$$c" ] || continue; \
-			if [ -n "$$parts" ]; then parts="$$parts | "; fi; \
-			parts="$$parts$$name: $$c"; \
-		done; \
-		notes="$$parts"; \
+		notes=$$(awk -F= '/^\[lede\]/{s="lede"} /^\[web\]/{s="web"} /^\[edev\]/{s="edev"} s&&$$1=="commit"{c[s]=$$2} s&&$$1=="subject"{sub[s]=$$2} END{ \
+			o=""; for (n in c){ if(o!="") o=o" | "; o=o n": "c[n]" "sub[n]; } print o; \
+		}' "$$swver"); \
 	fi; \
 	sha=$$(sha256sum "$$bin" | awk '{print $$1}'); \
 	echo "==> 上传 $$bin"; \
