@@ -301,6 +301,8 @@ inject-swver: ensure-container
 		web_rel=$$(sed -n "s/^PKG_RELEASE:=//p" "$$LEDE_DIR/package/lean/erouter-web/Makefile" 2>/dev/null | head -1); \
 		rtty_pkg=$$(sed -n "s/^PKG_VERSION:=//p" "$$LEDE_DIR/feeds/packages/utils/rtty/Makefile" 2>/dev/null | head -1); \
 		rtty_rel=$$(sed -n "s/^PKG_RELEASE:=//p" "$$LEDE_DIR/feeds/packages/utils/rtty/Makefile" 2>/dev/null | head -1); \
+		xfrpc_pkg=$$(sed -n "s/^PKG_VERSION:=//p" "$$LEDE_DIR/feeds/packages/net/xfrpc/Makefile" 2>/dev/null | head -1); \
+		xfrpc_rel=$$(sed -n "s/^PKG_RELEASE:=//p" "$$LEDE_DIR/feeds/packages/net/xfrpc/Makefile" 2>/dev/null | head -1); \
 		id="$$lede_commit-$$web_commit-$$edev_commit"; \
 		built_at=$$(TZ=Asia/Shanghai date "+%Y-%m-%d %H:%M:%S %z"); \
 		mkdir -p "$$(dirname "$$OUT")"; \
@@ -339,6 +341,7 @@ inject-swver: ensure-container
 			echo; \
 			echo "[packages]"; \
 			[ -n "$$rtty_pkg" ] && echo "rtty-openssl=$$rtty_pkg-$${rtty_rel:-1}"; \
+			[ -n "$$xfrpc_pkg" ] && echo "xfrpc=$$xfrpc_pkg-$${xfrpc_rel:-1}"; \
 			[ -n "$$edev_pkg" ] && echo "erouter-edev=$$edev_pkg-$${edev_rel:-1}"; \
 			[ -n "$$web_pkg" ] && echo "erouter-web=$$web_pkg-$${web_rel:-1}"; \
 		} > "$$OUT"; \

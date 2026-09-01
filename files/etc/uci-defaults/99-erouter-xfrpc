@@ -1,0 +1,7 @@
+#!/bin/sh
+# 首启启用 xfrpc（UCI 已由 files/etc/config/xfrpc 提供）
+
+[ -x /etc/init.d/xfrpc ] || exit 0
+
+/etc/init.d/xfrpc enable
+exit 0

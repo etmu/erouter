@@ -1,0 +1,15 @@
+#!/bin/sh
+# xfrpc 连 127.0.0.1:22；默认 dropbear 仅绑 lan，需补 loopback 实例
+
+uci -q get dropbear.loopback >/dev/null 2>&1 && exit 0
+
+uci set dropbear.loopback=dropbear
+uci set dropbear.loopback.Interface='loopback'
+uci set dropbear.loopback.Port='22'
+uci set dropbear.loopback.PasswordAuth='on'
+uci set dropbear.loopback.RootPasswordAuth='on'
+uci set dropbear.loopback.RootLogin='on'
+uci commit dropbear
+
+[ -x /etc/init.d/dropbear ] && /etc/init.d/dropbear reload
+exit 0
