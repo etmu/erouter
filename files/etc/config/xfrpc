@@ -1,5 +1,6 @@
 # Cudy TR3000 → cloud-server frps（8.138.182.21:10000）
 # 默认穿透 SSH：8.138.182.21:3000 → 本机 22（与 mt1300 的 1300 错开）
+# 默认穿透 HTTP：8.138.182.21:3001 → 本机 80（不改 uhttpd 配置）
 # 上游包默认 config xfrp 'init'；init.d 已 overlay 按 xfrp 类型读取 disabled
 
 config xfrp 'init'
@@ -16,3 +17,9 @@ config xfrpc 'ssh_tr3000'
 	option local_ip '127.0.0.1'
 	option local_port '22'
 	option remote_port '3000'
+
+config xfrpc 'http_tr3000'
+	option type 'tcp'
+	option local_ip '127.0.0.1'
+	option local_port '80'
+	option remote_port '3001'
