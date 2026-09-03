@@ -16,8 +16,7 @@
 #   make download socks        # 额外走 SOCKS（官方源兜底）
 #   make download MIRROR=URL
 #   make JOBS=4 BRANCH=mt1300 WEB_BRANCH=web_mt1300 EDEV_BRANCH=edev
-#   make upload                 # 上传最新 sysupgrade（version 取 /etc/swver 的 meta.id）
-#   make upload CHANNEL=stable UPLOAD_TOKEN=...
+#   make upload CHANNEL=debug   # 必须指定通道：stable | release | debug
 
 MK_DIR    := $(abspath $(dir $(lastword $(MAKEFILE_LIST))))
 LEDE_DIR  := $(abspath $(MK_DIR)/..)
@@ -118,7 +117,8 @@ help:
 	@echo "说明: make firmware = build + 生成 /etc/swver + 按需重编 erouter + 出固件"
 	@echo "版本: 编译时写入 files/etc/swver（lede/web/edev 提交信息）；无 my_config/VERSION"
 	@echo "固件: 对比 web/edev 源码指纹 + erouter 包 Makefile；有变更或 FORCE=1 则 clean 重编"
-	@echo "上传: make upload  →  POST $(UPLOAD_URL)；version=swver meta.id"
+	@echo "上传: make upload CHANNEL=stable|release|debug"
+	@echo "      必须命令行指定 CHANNEL（不写则失败，避免默默传到 stable）"
 	@echo "      令牌: 默认 UPLOAD_TOKEN=$(UPLOAD_TOKEN)；可 .upload_token 或命令行覆盖"
 	@echo "      变量: BOARD=$(BOARD) CHANNEL=$(CHANNEL) FW=路径 NOTES=覆盖"
 	@echo "权限: 写 lede 树一律以容器用户 etmu；make ensure-etmu-writable 自检"
@@ -426,8 +426,16 @@ download: ensure-container
 		make download -j$(JOBS)'
 
 # 不依赖 docker：直接 curl 上传本地 sysupgrade（产物在挂载上）
+# CHANNEL 必须在命令行给出，避免默认 stable 误传到正式通道
 upload:
-	@token="$(UPLOAD_TOKEN)"; \
+	@if [ "$(origin CHANNEL)" != "command line" ]; then \
+		echo "错误: 须指定 CHANNEL=stable|release|debug（例如 make upload CHANNEL=debug）"; exit 1; \
+	fi; \
+	case "$(CHANNEL)" in \
+		stable|release|debug) ;; \
+		*) echo "错误: CHANNEL 须为 stable、release 或 debug，当前=$(CHANNEL)"; exit 1;; \
+	esac; \
+	token="$(UPLOAD_TOKEN)"; \
 	if [ "$(origin UPLOAD_TOKEN)" != "command line" ] && [ -f "$(MK_DIR)/.upload_token" ]; then \
 		token=$$(tr -d '\r\n' < "$(MK_DIR)/.upload_token"); \
 	fi; \
