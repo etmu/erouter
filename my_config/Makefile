@@ -199,7 +199,6 @@ update-edev: ensure-container
 	@echo "==> 更新设备代理源码 → $(EDEV_DIR) (branch=$(EDEV_BRANCH))"
 	$(DOCKER_ETMU) bash -lc 'set -euo pipefail; \
 		EDEV_DIR=/home/etmu/lede/dl/etmu-edev; \
-		DST_MK=/home/etmu/lede/package/lean/erouter-edev/Makefile; \
 		mkdir -p /home/etmu/lede/dl; \
 		if [ -d "$$EDEV_DIR/.git" ]; then \
 			git -c safe.directory="*" -C "$$EDEV_DIR" remote set-url origin "$(EDEV_REPO)"; \
@@ -211,15 +210,9 @@ update-edev: ensure-container
 			git -c safe.directory="*" clone -b $(EDEV_BRANCH) --single-branch --depth 1 "$(EDEV_REPO)" "$$EDEV_DIR"; \
 		fi; \
 		test -f "$$EDEV_DIR/files/usr/sbin/erouterd" || { echo "错误: 缺少 erouterd"; exit 1; }; \
-		src_mk="$$EDEV_DIR/Makefile"; \
-		if [ -f "$$src_mk" ] && [ -f "$$DST_MK" ]; then \
-			ver=$$(sed -n "s/^PKG_VERSION:=//p" "$$src_mk" | head -1); \
-			rel=$$(sed -n "s/^PKG_RELEASE:=//p" "$$src_mk" | head -1); \
-			[ -n "$$ver" ] && sed -i "s/^PKG_VERSION:=.*/PKG_VERSION:=$$ver/" "$$DST_MK"; \
-			[ -n "$$rel" ] && sed -i "s/^PKG_RELEASE:=.*/PKG_RELEASE:=$$rel/" "$$DST_MK"; \
-			echo "==> 已同步 package/lean/erouter-edev PKG_VERSION=$${ver:-?} PKG_RELEASE=$${rel:-?}"; \
-		fi; \
-		echo "etmu-edev: $$(git -c safe.directory="*" -C "$$EDEV_DIR" rev-parse --short HEAD)"'
+		ver=$$(sed -n "s/^PKG_VERSION:=//p" "$$EDEV_DIR/Makefile" 2>/dev/null | head -1); \
+		rel=$$(sed -n "s/^PKG_RELEASE:=//p" "$$EDEV_DIR/Makefile" 2>/dev/null | head -1); \
+		echo "etmu-edev: $$(git -c safe.directory="*" -C "$$EDEV_DIR" rev-parse --short HEAD) PKG_VERSION=$${ver:-?} PKG_RELEASE=$${rel:-?}"'
 
 update-lede: ensure-container
 	@echo "==> 更新 lede ($(BRANCH), depth=1)"
@@ -295,8 +288,8 @@ inject-swver: ensure-container
 		edev_committed_at=$$($$GIT -C "$$EDEV_DIR" log -1 --format=%ci); \
 		edev_dirty=0; \
 		[ -n "$$($$GIT -C "$$EDEV_DIR" status --porcelain 2>/dev/null | grep -v node_modules || true)" ] && edev_dirty=1; \
-		edev_pkg=$$(sed -n "s/^PKG_VERSION:=//p" "$$LEDE_DIR/package/lean/erouter-edev/Makefile" 2>/dev/null | head -1); \
-		edev_rel=$$(sed -n "s/^PKG_RELEASE:=//p" "$$LEDE_DIR/package/lean/erouter-edev/Makefile" 2>/dev/null | head -1); \
+		edev_pkg=$$(sed -n "s/^PKG_VERSION:=//p" "$$EDEV_DIR/Makefile" 2>/dev/null | head -1); \
+		edev_rel=$$(sed -n "s/^PKG_RELEASE:=//p" "$$EDEV_DIR/Makefile" 2>/dev/null | head -1); \
 		web_pkg=$$(sed -n "s/^PKG_VERSION:=//p" "$$LEDE_DIR/package/lean/erouter-web/Makefile" 2>/dev/null | head -1); \
 		web_rel=$$(sed -n "s/^PKG_RELEASE:=//p" "$$LEDE_DIR/package/lean/erouter-web/Makefile" 2>/dev/null | head -1); \
 		rtty_pkg=$$(sed -n "s/^PKG_VERSION:=//p" "$$LEDE_DIR/feeds/packages/utils/rtty/Makefile" 2>/dev/null | head -1); \
